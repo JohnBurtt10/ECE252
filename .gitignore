@@ -1,0 +1,6 @@
+*.o
+*.out
+*.d
+.vscode
+notes.txt
+.png

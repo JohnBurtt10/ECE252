@@ -32,12 +32,11 @@ int main(void)
     printf("p->x = %d, p->y =%d\n", ((struct point*)(p->data))->x, ((struct point *)(p->data))->y);
 
     /* remove pointe p */
-    p->data = NULL;
     p->size = 0;
-    /*free(p);*/
 
     printf("q->x = %d, q->y =%d\n", ((struct point*)(q->data))->x, ((struct point *)(q->data))->y);
     
+    free(p);
 
     return(0);
 }
