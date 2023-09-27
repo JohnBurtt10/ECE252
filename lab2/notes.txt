@@ -6,6 +6,14 @@ CURLOPT_WRITEFUNCTION is the option to write the received data. To pass in the u
 
 Using pthreads, create n amount of threads and upon thread completion, append the cURL data to the img png array.
 
+Each image from webserver will be less than 8Kb.
+
+USE Mutex to lock array of PNG's so that only one thread can write to it at a time.
+https://www.geeksforgeeks.org/mutex-lock-for-linux-thread-synchronization/
+
+When thread is about to write to PNG array, lock perform a mutex lock before accessing array. Then unlock after finishing
+writing to it.
+
 https://curl.se/libcurl/c/multithread.html
 
 For multiple curl handlers:
