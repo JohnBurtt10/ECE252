@@ -21,14 +21,19 @@ typedef struct recv_buf2 {
                      /* <0 indicates an invalid seq number */
 } RECV_BUF;
 
+typedef struct png_buffer {
+    RECV_BUF* pngs;
+    int size;
+} PNG_BUFFER;
+
 void processInput(char *command, char *value, args* destination);
 void initalizeArguments(args* argument);
 void curlInit(CURL* curlHandlers[], args* arguments);
-void createRequest();
+void createRequest(CURL* curl);
 void cleanupCurlHandlers(CURL* curlArr[], int numOfCurls);
 void setup_curl_handler(CURL* curlHandler);
 
-RECV_BUF *pngArray;
+PNG_BUFFER pngArray;
 
 /* cURL callbacks */
 // Callback that receives header data.
@@ -57,7 +62,10 @@ pthread_mutex_t lock; // Mutex lock we will use to lock resources. Aka block oth
 int main(int argc, char* argv[]){
 
     args *arguments = malloc(sizeof(args));
-    pngArray = malloc(((8 + 8 + 4) + (8000)) * 50);
+
+    // Initlizaing PNG_BUFFER
+    pngArray.pngs = malloc(((8 + 8 + 4) + (8000)) * 50);
+    pngArray.size = 0;
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -80,20 +88,34 @@ int main(int argc, char* argv[]){
 
     printf("numThreads: %d | imageSegment: %d\n", arguments->numThreads, arguments->imageNum);
 
+    // Init Curl Handlers
     curlInit(curlHandlers, arguments);
+
 
     free(arguments);
     free(p_tids);
-    free(pngArray);
-    // free(imageSegBuffer);
+    free(pngArray.pngs);
     curl_global_cleanup();
     cleanupCurlHandlers(curlHandlers, arguments->numThreads);
     free(curlHandlers);
     return 0;
 }
 
-void createRequest(){
+/* 
+1) Call curl_easy_perform to call webserver, 
+2) extract data and header 
+3) Based on ECE252_HEADER line received, extract the image sequence number from it
+4) insert png data to proper index on pngArray buff depending on sequence number
+5) increment pngArray counter.
+*/
+void createRequest(CURL* curl){
+    while (pngArray.size < 50){
 
+
+        // Has image, write to pngbuffer
+        pthread_mutex_lock(&lock);
+        pthread_mutex_unlock(&lock);
+    }
 }
 
 // Sets up curl handler for provided url and png data.
@@ -131,6 +153,7 @@ void curlInit(CURL* curlHandlers[], args* arguments){
 
 }
 
+// ptr points to the delivered data, and the size of that data is nmemb; size is always 1. 
 size_t write_cb_curl(char *p_recv, size_t size, size_t nmemb, void *p_userdata){
 
     return 0;
