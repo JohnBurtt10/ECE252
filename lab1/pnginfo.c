@@ -11,7 +11,17 @@ typedef struct data_IHDR *data_IHDR_p;
 
 typedef struct simple_PNG *simple_PNG_p;
 
-// does not check if it's a valid png
+/**
+ * @brief Processes a PNG file and prints its dimensions.
+ *
+ * This function opens the specified PNG file, reads its header and IHDR chunk
+ * to determine the width and height of the image, and prints the dimensions
+ * to the console. The file is then closed, and memory allocated for IHDR data
+ * is freed.
+ *
+ * @param filename The path to the PNG file to be processed.
+ * @return 0 upon successful processing of the PNG file.
+ */
 int process_png(const char* filename) { 
     FILE *file = fopen(filename, "rb");
     
@@ -32,8 +42,17 @@ int process_png(const char* filename) {
     return 0;
 }
 
-// Returns 1 or 0. 1 -> Is a png, 0 -> Not a png
-
+/**
+ * @brief Checks if a file is a PNG image based on its header.
+ *
+ * This function attempts to open the specified file and reads its header
+ * to determine if it conforms to the PNG image format. If the file cannot
+ * be opened, it returns 0. If the file is successfully opened and the header
+ * indicates it's a PNG image, it returns 1. Otherwise, it returns 0.
+ *
+ * @param filename The path to the file to be checked.
+ * @return 1 if the file is a PNG image, 0 otherwise or on error.
+ */
 int is_file_png(char* filename) { 
     
     FILE *file = fopen(filename, "rb");
@@ -55,7 +74,19 @@ int is_file_png(char* filename) {
 
 }
 
-// Returns 1 or 0. 1 -> Is a png, 0 -> Not a png
+/**
+ * @brief Checks if the provided buffer contains a valid PNG header.
+ *
+ * This function compares the provided buffer with a standard PNG header
+ * to determine if it represents a valid PNG image. The standard PNG header
+ * consists of the first 8 bytes, which are compared against predefined values.
+ * If the buffer matches the PNG header, indicating it's a PNG image, the function
+ * returns 1. Otherwise, it returns 0.
+ *
+ * @param buf Pointer to the buffer containing the data to be checked.
+ * @param n The number of bytes to check in the buffer (should be PNG_SIG_SIZE or more).
+ * @return 1 if the buffer represents a valid PNG image, 0 otherwise.
+ */
 int is_png(U8 *buf, size_t n) {
     unsigned int cmpHeader[] = {137, 80, 78, 71, 13, 10, 26, 10};
     for (int i = 0; i < PNG_SIG_SIZE; ++i){
@@ -68,6 +99,21 @@ int is_png(U8 *buf, size_t n) {
     return 1;
 }
 
+/**
+ * @brief Retrieves PNG IHDR data from a file and populates the provided struct.
+ *
+ * This function reads the PNG IHDR data (width and height) from the specified
+ * file at the given offset, and populates the provided struct with the extracted
+ * width and height values. Default values for other IHDR properties are set in
+ * the provided struct. The file is expected to be at the correct position for
+ * reading IHDR data before calling this function.
+ *
+ * @param out Pointer to a struct data_IHDR where extracted data will be stored.
+ * @param fp File pointer to the opened PNG file.
+ * @param offset Offset from the starting position (based on 'whence') to read IHDR data.
+ * @param whence Specifies the starting position for seeking within the file (SEEK_SET, SEEK_CUR, SEEK_END).
+ * @return 1 upon successful extraction of IHDR data and population of the struct.
+ */
 int get_png_data_IHDR(struct data_IHDR *out, FILE *fp, long offset, int whence){
     // Setting default values
     out->height = 0;
