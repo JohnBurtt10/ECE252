@@ -1,0 +1,12 @@
+https://stackoverflow.com/questions/30733684/blocking-in-pthread-join
+
+webservers will send out random segmented images. Each image is segmeneted 50 times. Use threads to call each webserver to obtain all 50 segments.
+
+CURLOPT_WRITEFUNCTION is the option to write the received data. To pass in the userdata, use the command CURLOPT_WRITEDATA
+
+Using pthreads, create n amount of threads and upon thread completion, append the cURL data to the img png array.
+
+https://curl.se/libcurl/c/multithread.html
+
+For multiple curl handlers:
+https://curl.se/libcurl/c/multi-app.html
