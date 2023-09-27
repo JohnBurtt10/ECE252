@@ -62,6 +62,9 @@ void cat_png(int argc, char* argv[]) {
         data_IHDR_p ihdr = malloc(13);
 
         if (!isPng(file)){
+            free(ihdr);
+            free(png_buffer);
+            fclose(file);
             return; // Skip the png file as it is not an image.
         }
 
@@ -187,12 +190,18 @@ int isPng(FILE *file) {
     unsigned char *header = malloc(sizeof(unsigned char) * 8);
 
     fseek(file, 0, SEEK_SET);
-    fread(header, 1, PNG_SIG_SIZE, file);
+    int numBytes = fread(header, 1, PNG_SIG_SIZE, file);
+
+    if (numBytes < PNG_SIG_SIZE){
+        free(header);
+        return 0;
+    }
 
     unsigned int cmp_header[] = {137, 80, 78, 71, 13, 10, 26, 10};
     for (int i = 0; i < PNG_SIG_SIZE; ++i){
         unsigned int result = header[i];
         if (result != cmp_header[i]){
+            free(header);
             return 0;
         }
     }
