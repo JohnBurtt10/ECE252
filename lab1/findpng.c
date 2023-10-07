@@ -13,6 +13,8 @@
 #include "./starter/png_util/lab_png.h"
 #include "pnginfo.h"
 
+int png_found = 0;
+
 extern int is_file_png(char* filename);
 
 void list_directory_contents(const char *directory);
@@ -25,6 +27,10 @@ int main(int argc, char *argv[])
     }
 
     list_directory_contents(argv[1]);
+    char no_png_found_message[] = "findpng: No PNG file found\n";
+    if (png_found == 0) { 
+        printf("%s", no_png_found_message);
+    }
 
     return 0;
 }
@@ -74,6 +80,7 @@ void list_directory_contents(const char *directory)
                     // recursively call children nodes
                     list_directory_contents(formatted_path);
             } else if (is_file_png(formatted_path)) {
+                png_found = 1;
                 printf("%s\n", formatted_path);
             }
             
