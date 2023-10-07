@@ -1,2 +1,2 @@
 all: paster.c
-	gcc paster.c -o paster.o -lcurl
+	gcc paster.c -o paster.o -lcurl -pthread
