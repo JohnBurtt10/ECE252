@@ -7,8 +7,8 @@
 
 #define THREAD_CMD "-t"
 #define RANDOM_PNG_SEG "-n"
-#define BUF_SIZE 1048576  /* 1024*1024 = 1M */
-#define BUF_INC  524288   /* 1024*512  = 0.5M */
+#define BUF_SIZE 8000  /* 1024*1024 = 1M */
+#define BUF_INC  500   /* 1024*512  = 0.5M */
 #define ECE252_HEADER "X-Ece252-Fragment: "
 
 #define max(a, b) \
@@ -206,7 +206,7 @@ CURL* curlInit(THREAD_ARGS* threadArgs, RECV_BUF* recv_buf){
     printf("%s\n", urls[0][imageToGrab]);
 
     /* specify URL to get */
-    curl_easy_setopt(curl_handle, CURLOPT_URL, urls[0][imageToGrab]);
+    curl_easy_setopt(curl_handle, CURLOPT_URL, urls[threadArgs->thread_id % 3][imageToGrab]);
 
     /* register write call back function to process received data */
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_cb_curl); 
