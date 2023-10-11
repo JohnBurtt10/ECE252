@@ -4,12 +4,23 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <curl/curl.h>
+#include "../lab1/starter/png_util/zutil.h"    /* for mem_def() and mem_inf() */
+#include "../lab1/starter/png_util/lab_png.h"
+#include "../lab1/starter/png_util/crc.h"
+#include <stdint.h>  // for uint32_t
+#include <arpa/inet.h>
 
 #define THREAD_CMD "-t"
 #define RANDOM_PNG_SEG "-n"
 #define BUF_SIZE 8000  /* 1024*1024 = 1M */
 #define BUF_INC  500   /* 1024*512  = 0.5M */
 #define ECE252_HEADER "X-Ece252-Fragment: "
+
+#define IDAT_OFFSET_BYTES 33 // 33 bytes from start of file to get IDAT chunk start.
+
+#define IHDR_CHUNK_SIZE 25
+
+#define HEADER_SIZE 8
 
 #define max(a, b) \
    ({ __typeof__ (a) _a = (a); \
@@ -36,9 +47,12 @@ typedef struct recv_buf2 {
 
 typedef struct _png_buffer {
     char* pngs[50]; // 50 images, each of a buffer of size BUF_SIZE (Aka some char* of size BUF_SIZE)
+    size_t size_of_png[50];
     volatile bool imageReceived[50];
     volatile int size;
 } PNG_BUFFER;
+
+typedef struct data_IHDR *data_IHDR_p;
 
 void processInput(char *command, char *value, args* destination);
 void initalizeArguments(args* argument);
@@ -46,7 +60,12 @@ void initalizeArguments(args* argument);
 void* createRequest(void* args);
 void initPNGBuffer(PNG_BUFFER* pngBuffer);
 int recv_buf_init(RECV_BUF *ptr, size_t max_size);
-
+void get_png_data_IDAT(unsigned char *out, unsigned char *mem_data, long offset, int idat_data_length);
+void write_png(unsigned char *IDAT_concat_Data_def, unsigned int total_height, unsigned int pngWidth, size_t IDAT_Concat_Data_Def_Len);
+unsigned char* concatenate_png(unsigned char *png_buffer ,unsigned char *array_to_concat, size_t size_of_array_to_concat, size_t *size_of_png_buffer);
+void cat_png();
+uint32_t get_png_idat_data_length(const uint8_t *memory);
+int get_png_data_IHDR_mem(struct data_IHDR *out, char *memory, size_t offset, size_t size);
 PNG_BUFFER pngBuffer;
 
 /* cURL callbacks */
@@ -114,7 +133,8 @@ int main(int argc, char* argv[]){
 
     free(arguments);
     free(p_tids);
-    free(threadArgs);
+    free(threadArgs); 
+    cat_png();
 
     for (int i = 0; i < 50; i++){
         free(pngBuffer.pngs[i]);
@@ -122,6 +142,196 @@ int main(int argc, char* argv[]){
 
     curl_global_cleanup();
     return 0;
+}
+
+void cat_png() { 
+    U64 IDAT_Data_inf_len = 0; /* uncompressed data length */
+    size_t IDAT_Concat_Data_Def_Len = 0;
+
+    unsigned int total_height = 0;
+    unsigned int pngWidth = 0;
+
+    // FILE *file;
+
+    unsigned char IDAT_array[50];
+    unsigned char *png_buffer = NULL;
+    unsigned int height; 
+    unsigned int width;
+    size_t size_of_png_buffer = 0;
+    for (size_t i = 1; i < 50; i++){
+        data_IHDR_p ihdr = malloc(13);
+
+        height = htonl(400);
+        width = htonl(6);
+        
+        // Now that we have IHDR data, need to retrieve IDAT data. IDAT buffer size = Height * (Width * 4 + 1)
+        int IDAT_def_length = height * (width * 4 + 1);
+        unsigned char *IDAT_data_inf = malloc(IDAT_def_length);
+        unsigned int IDAT_Data_def_len = get_png_idat_data_length(pngBuffer.pngs[i]);
+        unsigned char *IDAT_data_def = malloc(IDAT_Data_def_len);
+
+        // SEG FAULTING IN THIS FUNCTION
+        get_png_data_IDAT(IDAT_data_def, pngBuffer.pngs[i], IDAT_OFFSET_BYTES+8, IDAT_Data_def_len);
+
+        // // decompressing IDAT data.
+        mem_inf(IDAT_data_inf, &IDAT_Data_inf_len, IDAT_data_def, IDAT_Data_def_len);
+
+        png_buffer = concatenate_png(png_buffer, IDAT_data_inf, IDAT_Data_inf_len, &size_of_png_buffer);
+        // printf("%lu\n", IDAT_Data_inf_len);
+
+        free(ihdr);
+        free(IDAT_data_inf);
+        free(IDAT_data_def);
+    }
+
+    // Compress the new concancated IDAT data.
+    unsigned char *IDAT_Concat_Data_Def = malloc(400*(300 * 4 + 1));
+    mem_def(IDAT_Concat_Data_Def, &IDAT_Concat_Data_Def_Len, png_buffer, size_of_png_buffer, Z_DEFAULT_COMPRESSION);
+    
+    write_png(IDAT_Concat_Data_Def, 400, 300, IDAT_Concat_Data_Def_Len);
+
+    free(IDAT_Concat_Data_Def);
+    free(png_buffer);
+}
+
+unsigned char* concatenate_png(unsigned char *png_buffer ,unsigned char *array_to_concat, size_t size_of_array_to_concat, size_t *size_of_png_buffer){
+    unsigned char *new_buffer = malloc( sizeof(unsigned char) *  (size_of_array_to_concat + *size_of_png_buffer));
+
+    if (png_buffer == NULL){
+        memcpy(new_buffer, array_to_concat, size_of_array_to_concat);
+
+    } else {
+        // Copy arr1 to the beginning of combinedArr
+        memcpy(new_buffer, png_buffer, *size_of_png_buffer);
+        
+        // Copy arr2 to the end of combinedArr
+        memcpy(new_buffer + *size_of_png_buffer, array_to_concat, size_of_array_to_concat);
+        free(png_buffer);
+    }
+
+    *size_of_png_buffer += size_of_array_to_concat;
+
+    return new_buffer;
+}
+
+void write_png(unsigned char *IDAT_concat_Data_def, unsigned int total_height, unsigned int pngWidth, size_t IDAT_Concat_Data_Def_Len) {
+    printf("IDAT_concat_Data_def: ");
+for (size_t i = 0; i < IDAT_Concat_Data_Def_Len; i++) {
+    printf("%02X ", IDAT_concat_Data_def[i]);  // Print byte in hexadecimal format
+    if ((i + 1) % 16 == 0)
+        printf("\n");  // Print a new line every 16 bytes
+}
+printf("\n");
+
+printf("Total height: %u\n", total_height);
+printf("PNG width: %u\n", pngWidth);
+printf("IDAT_Concat_Data_Def_Len: %zu\n", IDAT_Concat_Data_Def_Len);
+    struct data_IHDR IHDR_data;
+    IHDR_data.height = ntohl(total_height);
+    IHDR_data.width = ntohl(pngWidth);
+    IHDR_data.bit_depth = 8;
+    IHDR_data.color_type = 6;
+    IHDR_data.compression = 0;
+    IHDR_data.filter = 0;
+    IHDR_data.interlace = 0;
+
+    unsigned char* new_png_buffer = malloc(8 + (4 + 4 + 13 + 4) + 4 + 4 + IDAT_Concat_Data_Def_Len + 4 + 12); // header + IHDR + IDAT + IEND
+
+    //Writing header
+    unsigned char headerArray[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    FILE *png_all = fopen("all.png", "wb"); // Create file if not already exists. Append to it.
+    memcpy(new_png_buffer, &headerArray, 8);
+
+    // Writing IHDR chunk
+    unsigned int IHDR_length = ntohl(13);
+    unsigned char IHDR_type[] = "IHDR";
+    unsigned int U32_IHDR_Data_Buffer[] = {IHDR_data.width, IHDR_data.height};
+    unsigned char U8_IHDR_Data_Buffer[] = {IHDR_data.bit_depth, IHDR_data.color_type, IHDR_data.compression, IHDR_data.filter, IHDR_data.interlace};
+    memcpy(new_png_buffer + HEADER_SIZE, &IHDR_length, 4);
+    memcpy(new_png_buffer + HEADER_SIZE + 4, &IHDR_type, 4);
+    memcpy(new_png_buffer + HEADER_SIZE + 4 + 4, &U32_IHDR_Data_Buffer, sizeof(U32) * 2);
+    memcpy(new_png_buffer + HEADER_SIZE + 4 + 4 + 8, &U8_IHDR_Data_Buffer, 5);
+    unsigned int crc_val = ntohl(crc(new_png_buffer + 8 + 4, 13 + 4));
+    memcpy(new_png_buffer + HEADER_SIZE + 4 + 4 + 13, &crc_val, 4);
+
+    // Writing IDAT chunk
+    unsigned int IDAT_length = ntohl(IDAT_Concat_Data_Def_Len);
+    unsigned char IDAT_type[] = "IDAT";
+    memcpy(new_png_buffer + HEADER_SIZE + IHDR_CHUNK_SIZE, &IDAT_length, 4);
+    memcpy(new_png_buffer + HEADER_SIZE + IHDR_CHUNK_SIZE + 4, &IDAT_type, 4);
+    memcpy(new_png_buffer + HEADER_SIZE + IHDR_CHUNK_SIZE + 8, IDAT_concat_Data_def, IDAT_Concat_Data_Def_Len);
+    crc_val = ntohl(crc(new_png_buffer + HEADER_SIZE + IHDR_CHUNK_SIZE + 4, IDAT_Concat_Data_Def_Len + 4));
+    memcpy(new_png_buffer + HEADER_SIZE + IHDR_CHUNK_SIZE + 8 + IDAT_Concat_Data_Def_Len, &crc_val, 4);
+    
+    // Writing IEND chunk
+    int IEND_CHUNK_START = HEADER_SIZE + IHDR_CHUNK_SIZE + 8 + IDAT_Concat_Data_Def_Len + 4;
+    unsigned char IEND_Chunk[] = {0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
+    memcpy(new_png_buffer + IEND_CHUNK_START, &IEND_Chunk, 8);
+    crc_val = ntohl(crc(new_png_buffer + IEND_CHUNK_START + 4 , 4));
+    memcpy(new_png_buffer + IEND_CHUNK_START + 8, &crc_val, 4);
+
+    fwrite(new_png_buffer, HEADER_SIZE + IHDR_CHUNK_SIZE + 8 + IDAT_Concat_Data_Def_Len + 4 + 8 + 4, 1, png_all);
+
+    free(new_png_buffer);
+    fclose(png_all);
+}
+
+unsigned int get_png_idat_data_length(const uint8_t *memory) {
+    // Assuming IDAT_OFFSET_BYTES is the offset in bytes where the length is stored
+
+    unsigned int idat_data_length = 0;
+
+    // Extract the length from memory
+    idat_data_length |= ((unsigned int)memory[IDAT_OFFSET_BYTES]) << 24;
+    idat_data_length |= ((unsigned int)memory[IDAT_OFFSET_BYTES + 1]) << 16;
+    idat_data_length |= ((unsigned int)memory[IDAT_OFFSET_BYTES + 2]) << 8;
+    idat_data_length |= ((unsigned int)memory[IDAT_OFFSET_BYTES + 3]);
+
+    // Convert native little endian to big endian and return the number
+    return htonl(idat_data_length);
+}
+
+
+void get_png_data_IDAT(unsigned char *out, unsigned char *mem_data, long offset, int idat_data_length) {
+    // Calculate the memory location based on the offset.
+    unsigned char *mem_location = mem_data + offset;
+
+    // Copy the compressed IDAT data from the memory location.
+    for (int i = 0; i < idat_data_length; i++) {
+        out[i] = mem_location[i];
+    }
+}
+
+int get_png_data_IHDR_mem(struct data_IHDR *out, char *memory, size_t offset, size_t size) {
+    // Setting default values
+    out->height = 0;
+    out->width = 0;
+    out->bit_depth = 8;
+    out->color_type = 6;
+    out->compression = 0;
+    out->filter = 0;
+    out->interlace = 0;
+
+    // Calculate the position in memory to read IHDR Data
+    uint32_t width, height;
+    
+    // Make sure there's enough data to read the width and height
+    if (size < offset + 8)
+        return 0;  // Error: Not enough data
+    
+    // Get IHDR width
+    width = *((uint32_t*)((char*)memory + offset));
+    offset += 4;
+    // Get IHDR height
+    height = *((uint32_t*)((char*)memory + offset));
+
+    height = htonl(height);
+    width = htonl(width);
+
+    out->height = height;
+    out->width = width;
+
+    return 1;
 }
 
 /* 
