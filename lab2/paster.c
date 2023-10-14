@@ -126,6 +126,7 @@ int main(int argc, char* argv[]){
         pthread_join(p_tids[i], NULL);
     }
 
+    // Free up memory
     free(arguments);
     free(p_tids);
     free(threadArgs); 
@@ -364,41 +365,6 @@ void* createRequest(void* args){
     curl_easy_cleanup(curl_handle);
 
     return NULL;
-}
-
-// Sets up curl handler. NOT USED
-CURL* curlInit(THREAD_ARGS* threadArgs, RECV_BUF* recv_buf){
-
-    CURL* curl_handle;
-    curl_handle = curl_easy_init();
-
-    if (curl_handle == NULL){
-        printf("Failed to initalize CURL");
-        return NULL;
-    }    
-
-    int imageToGrab = threadArgs->imageToGrab - 1;
-
-    printf("%s\n", urls[0][imageToGrab]);
-
-    /* specify URL to get */
-    curl_easy_setopt(curl_handle, CURLOPT_URL, urls[threadArgs->thread_id % 3][imageToGrab]);
-
-    /* register write call back function to process received data */
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_cb_curl); 
-    /* user defined data structure passed to the call back function */
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&recv_buf);
-
-    /* register header call back function to process received header data */
-    curl_easy_setopt(curl_handle, CURLOPT_HEADERFUNCTION, header_cb_curl); 
-    /* user defined data structure passed to the call back function */
-    curl_easy_setopt(curl_handle, CURLOPT_HEADERDATA, (void *)&recv_buf);
-
-    /* some servers requires a user-agent field */
-    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-
-    return curl_handle;
-
 }
 
 // ptr points to the delivered data, and the size of that data is nmemb; size is always 1. 
