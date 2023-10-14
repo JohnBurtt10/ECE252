@@ -114,8 +114,6 @@ int main(int argc, char* argv[]){
         return 1;
     }
 
-    printf("numThreads: %d | imageSegment: %d\n", arguments->numThreads, arguments->imageNum);
-
     // Create threads
     for (int i = 0; i < arguments->numThreads; ++i){
         threadArgs[i].imageToGrab = arguments->imageNum;
@@ -198,10 +196,6 @@ unsigned char* concatenate_png(unsigned char *png_buffer ,unsigned char *array_t
 }
 
 void write_png(unsigned char *IDAT_concat_Data_def, unsigned int total_height, unsigned int pngWidth, size_t IDAT_Concat_Data_Def_Len) {
-
-    printf("Total height: %u\n", total_height);
-    printf("PNG width: %u\n", pngWidth);
-    printf("IDAT_Concat_Data_Def_Len: %zu\n", IDAT_Concat_Data_Def_Len);
     struct data_IHDR IHDR_data;
     IHDR_data.height = ntohl(total_height);
     IHDR_data.width = ntohl(pngWidth);
@@ -325,8 +319,10 @@ void* createRequest(void* args){
 
     int imageToGrab = threadArgs->imageToGrab - 1;
 
+    // printf("Thread # %d fetching from webserver: %s\n", threadArgs->thread_id, urls[threadArgs->thread_id%3][imageToGrab]);
+
     /* specify URL to get */
-    curl_easy_setopt(curl_handle, CURLOPT_URL, urls[0][imageToGrab]);
+    curl_easy_setopt(curl_handle, CURLOPT_URL, urls[threadArgs->thread_id%3][imageToGrab]);
 
     /* register write call back function to process received data */
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_cb_curl); 
