@@ -342,12 +342,12 @@ void* createRequest(void* args){
         recv_buf_init(&recv_buf, BUF_SIZE);
         CURLcode res = curl_easy_perform(curl_handle);
 
-        if( res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        } else {
-            printf("%lu bytes received in memory %p, seq=%d.\n", \
-                recv_buf.size, recv_buf.buf, recv_buf.seq);
-        }
+        // if( res != CURLE_OK) {
+        //     fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        // } else {
+        //     printf("%lu bytes received in memory %p, seq=%d.\n", \
+        //         recv_buf.size, recv_buf.buf, recv_buf.seq);
+        // }
 
         // Has image, write to pngbuffer
         pthread_mutex_lock(&lock);
