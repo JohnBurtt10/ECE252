@@ -2,4 +2,4 @@
 *.out
 *.d
 .vscode
-.png
+*.png

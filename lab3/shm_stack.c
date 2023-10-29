@@ -40,15 +40,9 @@ typedef struct int_stack
 {
     int size;               /* the max capacity of the stack */
     int pos;                /* position of last item pushed onto the stack */
-    int *items;             /* stack of stored integers */
+    char **items;             /* stack of stored integers */
 } ISTACK;
 
-typedef struct b_stack
-{
-    int size;               /* the max capacity of the stack */
-    // int pos;                /* position of last item pushed onto the stack */
-    int *items;             /* stack of stored integers */
-} BSTACK;
 /**
  * @brief calculate the total memory that the struct int_stack needs and
  *        the items[size] needs.
@@ -59,7 +53,7 @@ typedef struct b_stack
 
 int sizeof_shm_stack(int size)
 {
-    return (sizeof(ISTACK) + sizeof(int) * size);
+    return (sizeof(ISTACK) + sizeof(*char) * size);
 }
 
 /**
@@ -79,7 +73,7 @@ int init_shm_stack(ISTACK *p, int stack_size)
 
     p->size = stack_size;
     p->pos  = -1;
-    p->items = (int *) ((char *)p + sizeof(ISTACK));
+    p->items = (char **) ((char *)p + sizeof(ISTACK));
     return 0;
 }
 
@@ -106,7 +100,7 @@ ISTACK *create_stack(int size)
         perror("malloc");
     } else {
         char *p = (char *)pstack;
-        pstack->items = (int *) (p + sizeof(ISTACK));
+        pstack->items = (char **) (p + sizeof(ISTACK));
         pstack->size = size;
         pstack->pos  = -1;
     }
@@ -161,7 +155,7 @@ int is_empty(ISTACK *p)
  * @return 0 on success; non-zero otherwise
  */
 
-int push(ISTACK *p, int item)
+int push(ISTACK *p, char* item)
 {
     if ( p == NULL ) {
         return -1;
@@ -184,7 +178,7 @@ int push(ISTACK *p, int item)
  * @return 0 on success; non-zero otherwise
  */
 
-int pop(ISTACK *p, int *p_item)
+int pop(ISTACK *p, char **p_item)
 {
     if ( p == NULL ) {
         return -1;
