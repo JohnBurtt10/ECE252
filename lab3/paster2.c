@@ -2,6 +2,11 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <fcntl.h>
+
+#define INCRE_SEM "/increSem"
+#define PROD_SEM "/prodSem" 
+#define CON_SEM "/conSem"
 
 typedef struct _args {
     int bufferSize; // Buffer to hold image segments. Less than 50.
@@ -29,10 +34,45 @@ const char* const urls[3][3] =
 
 args arguments;
 
+sem_t *sem;
+
+unsigned int count = 0;
+
+unsigned int checkAndSet() {
+    unsigned int return_val;
+    sem_wait(sem);
+    return_val = count;
+    count++;
+    sem_post(sem);
+
+}
+
 void processInput(int argc, char *argv[], args* destination);
 
 int main(int argc, char* argv[]){
+    unsigned int itt;
     processInput(argc, argv, &arguments);
+    
+
+    for (int i = 0; i < arguments.numProducers; ++i){
+
+        if (getpid == 0) { 
+            // child process
+            // while (itt = checkAndSet()  )
+            // exit(1);
+        }
+
+    }
+
+    for (int i =0; i < arguments.numConsumers; ++i){
+
+    }
+
+    // Wait for all processes to end
+    while(wait(NULL) > 0){};
+
+    // deallocate memory
+
 
     return 0;
 }
