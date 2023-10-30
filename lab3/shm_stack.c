@@ -13,36 +13,6 @@
 #include <stdlib.h>
 #include "shm_stack.h"
 
-/* a stack that can hold integers */
-/* Note this structure can be used by shared memory,
-   since the items field points to the memory right after it.
-   Hence the structure and the data items it holds are in one
-   continuous chunk of memory.
-
-   The memory layout:
-   +===============+
-   | size          | 4 bytes
-   +---------------+
-   | pos           | 4 bytes
-   +---------------+
-   | items         | 8 bytes
-   +---------------+
-   | items[0]      | 4 bytes
-   +---------------+
-   | items[1]      | 4 bytes
-   +---------------+
-   | ...           | 4 bytes
-   +---------------+
-   | items[size-1] | 4 bytes
-   +===============+
-*/
-typedef struct int_stack
-{
-    int size;               /* the max capacity of the stack */
-    int pos;                /* position of last item pushed onto the stack */
-    char **items;             /* stack of stored integers */
-} ISTACK;
-
 /**
  * @brief calculate the total memory that the struct int_stack needs and
  *        the items[size] needs.
@@ -53,7 +23,7 @@ typedef struct int_stack
 
 int sizeof_shm_stack(int size)
 {
-    return (sizeof(ISTACK) + sizeof(*char) * size);
+    return (sizeof(ISTACK) + sizeof(RECV_BUF*) * size);
 }
 
 /**
@@ -73,7 +43,7 @@ int init_shm_stack(ISTACK *p, int stack_size)
 
     p->size = stack_size;
     p->pos  = -1;
-    p->items = (char **) ((char *)p + sizeof(ISTACK));
+    p->items = (RECV_BUF **) ((RECV_BUF *)p + sizeof(ISTACK));
     return 0;
 }
 
@@ -100,7 +70,7 @@ ISTACK *create_stack(int size)
         perror("malloc");
     } else {
         char *p = (char *)pstack;
-        pstack->items = (char **) (p + sizeof(ISTACK));
+        pstack->items = (RECV_BUF **) (p + sizeof(ISTACK));
         pstack->size = size;
         pstack->pos  = -1;
     }
@@ -151,11 +121,11 @@ int is_empty(ISTACK *p)
 /**
  * @brief push one integer onto the stack 
  * @param ISTACK *p the address of the ISTACK data structure
- * @param int item the integer to be pushed onto the stack 
+ * @param char item the integer to be pushed onto the stack 
  * @return 0 on success; non-zero otherwise
  */
 
-int push(ISTACK *p, char* item)
+int push(ISTACK *p, RECV_BUF* image)
 {
     if ( p == NULL ) {
         return -1;
@@ -163,7 +133,7 @@ int push(ISTACK *p, char* item)
 
     if ( !is_full(p) ) {
         ++(p->pos);
-        p->items[p->pos] = item;
+        p->items[p->pos] = image;
         return 0;
     } else {
         return -1;
@@ -178,14 +148,14 @@ int push(ISTACK *p, char* item)
  * @return 0 on success; non-zero otherwise
  */
 
-int pop(ISTACK *p, char **p_item)
+int pop(ISTACK *p, RECV_BUF** image)
 {
     if ( p == NULL ) {
         return -1;
     }
 
     if ( !is_empty(p) ) {
-        *p_item = p->items[p->pos];
+        *image = p->items[p->pos];
         (p->pos)--;
         return 0;
     } else {
