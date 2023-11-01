@@ -1,0 +1,1 @@
+Producers need to ping server and fetch the data from the callback.
