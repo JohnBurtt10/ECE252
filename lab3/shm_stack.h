@@ -22,6 +22,10 @@ typedef struct int_stack
     int size;               /* the max capacity of the stack */
     int pos;                /* position of last item pushed onto the stack */
     RECV_BUF** items;             /* stack of stored buffers */
+    sem_t sem;
+    sem_t buffer_sem;
+    sem_t items_sem;
+    sem_t spaces_sem;
 } ISTACK;
 
 
@@ -32,4 +36,4 @@ void destroy_stack(struct int_stack *p);
 int is_full(struct int_stack *p);
 int is_empty(struct int_stack *p);
 int push(struct int_stack *p, RECV_BUF* image);
-int pop(struct int_stack *p, RECV_BUF** image);
+int pop(struct int_stack *p, RECV_BUF* image);

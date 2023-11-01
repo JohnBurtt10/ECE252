@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "shm_stack.h"
+#include <semaphore.h>
 
 /* a stack that can hold integers */
 /* Note this structure can be used by shared memory,
@@ -163,17 +164,19 @@ int is_empty(ISTACK *p)
 
 int push(ISTACK *p, int item)
 {
-    if ( p == NULL ) {
-        return -1;
-    }
+    printf("wrong def");
+    // if ( p == NULL ) {
+    //     return -1;
+    // }
 
-    if ( !is_full(p) ) {
-        ++(p->pos);
-        p->items[p->pos] = item;
-        return 0;
-    } else {
-        return -1;
-    }
+    // if ( !is_full(p) ) {
+    //     ++(p->pos);
+    //     p->items[p->pos] = item;
+    //     return 0;
+    // } else {
+    //     return -1;
+    // }
+    return 0;
 }
 
 /**

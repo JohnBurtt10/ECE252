@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <semaphore.h>
 #include "shm_stack.h"
 
 /**
@@ -43,7 +44,14 @@ int init_shm_stack(ISTACK *p, int stack_size)
 
     p->size = stack_size;
     p->pos  = -1;
-    p->items = (RECV_BUF **) ((RECV_BUF *)p + sizeof(ISTACK));
+    p->items = (RECV_BUF **) ((char *)p + sizeof(ISTACK));
+    //p->sem (sem_t)
+    //init semaphores
+    sem_init(&p->sem, 1, 1);
+    sem_init(&p->items_sem, 1, 0);
+    sem_init(&p->buffer_sem, 1, 1);
+    sem_init(&p->spaces_sem, 1, stack_size);
+
     return 0;
 }
 
@@ -138,6 +146,7 @@ int push(ISTACK *p, RECV_BUF* image)
     } else {
         return -1;
     }
+    return 1;
 }
 
 /**
@@ -148,22 +157,24 @@ int push(ISTACK *p, RECV_BUF* image)
  * @return 0 on success; non-zero otherwise
  */
 
-int pop(ISTACK *p, RECV_BUF** image)
+int pop(ISTACK *p, RECV_BUF* image)
 {
-    printf("in pop: %p\n", (void *)p);
+    printf("Start popping\n");
     
     if (p == NULL) {
         return -1;
     }
     
-    printf("p: %p\n", (void *)p);
 
     if (!is_empty(p)) {
-        *image = p->items[p->pos];
+        *image = *(p->items[p->pos]);
         (p->pos)--; // Assuming your stack is 0-based.
         return 0;
     } else {
         return 1;
     }
+
+    printf("End popping\n");
+
 }
 
