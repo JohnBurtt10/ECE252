@@ -170,9 +170,9 @@ int main(int argc, char* argv[]){
                 sem_post(&pstack->buffer_sem);
                 sem_post(&pstack->spaces_sem);
                 // cat_png(image);
-                printf("Image Seq: %d\n", image->seq);
                 free(image);
             }
+            exit(0);
         }
 
     }
@@ -316,7 +316,7 @@ void* createRequest(unsigned int imageSequence){
     sem_wait(&pstack->spaces_sem);
     sem_wait(&pstack->buffer_sem);
     printf("Start pushing\n");
-
+    printf("Image Seq: %d\n", recv.seq);
     push(pstack, &recv_buf);
     sem_post(&pstack->items_sem);
     sem_post(&pstack->buffer_sem);    

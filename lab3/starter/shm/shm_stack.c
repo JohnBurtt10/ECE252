@@ -164,18 +164,17 @@ int is_empty(ISTACK *p)
 
 int push(ISTACK *p, int item)
 {
-    printf("wrong def");
-    // if ( p == NULL ) {
-    //     return -1;
-    // }
+    if ( p == NULL ) {
+        return -1;
+    }
 
-    // if ( !is_full(p) ) {
-    //     ++(p->pos);
-    //     p->items[p->pos] = item;
-    //     return 0;
-    // } else {
-    //     return -1;
-    // }
+    if ( !is_full(p) ) {
+        ++(p->pos);
+        p->items[p->pos] = item;
+        return 0;
+    } else {
+        return -1;
+    }
     return 0;
 }
 
