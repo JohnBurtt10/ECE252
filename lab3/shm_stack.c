@@ -150,15 +150,20 @@ int push(ISTACK *p, RECV_BUF* image)
 
 int pop(ISTACK *p, RECV_BUF** image)
 {
-    if ( p == NULL ) {
+    printf("in pop: %p\n", (void *)p);
+    
+    if (p == NULL) {
         return -1;
     }
+    
+    printf("p: %p\n", (void *)p);
 
-    if ( !is_empty(p) ) {
+    if (!is_empty(p)) {
         *image = p->items[p->pos];
-        (p->pos)--;
+        (p->pos)--; // Assuming your stack is 0-based.
         return 0;
     } else {
         return 1;
     }
 }
+
