@@ -151,7 +151,8 @@ int is_empty(ISTACK *p)
 {
     if ( p == NULL ) {
         return 0;
-    }
+    } 
+    printf("p->pos: %d\n", p->pos);
     return ( p->pos == -1 );
 }
 

@@ -146,7 +146,7 @@ int main(int argc, char* argv[]){
                 itt = producerCheckAndSet();
                 sem_post(&pstack->sem);
                 if (itt == -1) {
-                    printf("%s\n", "exiting");
+                    // printf("%s\n", "exiting");
                     exit(0);
                 }
                 createRequest(itt);
@@ -165,8 +165,14 @@ int main(int argc, char* argv[]){
                 sem_wait(&pstack->items_sem);
                 // binary sempahor
                 sem_wait(&pstack->buffer_sem);
-                if (*current_image_to_fetch == 50 && is_empty(pstack)) exit(0);
+                if (*current_image_to_fetch == 50 && !is_empty(pstack)){
+                    printf("Popping Exiting\n");
+                    sem_post(&pstack->buffer_sem);
+                    sem_post(&pstack->spaces_sem);
+                    exit(0);
+                }
                 pop(pstack, image);
+                printf("Image seq: %d\n", image->seq);
                 sem_post(&pstack->buffer_sem);
                 sem_post(&pstack->spaces_sem);
                 // cat_png(image);
@@ -178,7 +184,7 @@ int main(int argc, char* argv[]){
     }
 
     // Wait for all processes to end
-    // while(wait(NULL) > 0){};
+    while(wait(NULL) > 0){};
 
     // Compress the new concancated IDAT data.
     // unsigned char *IDAT_Concat_Data_Def = malloc(400*(300 * 4 + 1));
@@ -197,14 +203,12 @@ int main(int argc, char* argv[]){
     sem_destroy(&pstack->sem);
     
     shmdt(pstack);
-    printf("%d, %d\n", shmid_stack, getpid());
     if ( shmctl(shmid_stack, IPC_RMID, NULL) == -1 ) {
         perror("shmctl");
         abort();
     }
 
     shmdt(current_image_to_fetch);
-    printf("%d, %d\n", shmid_counter, getpid());
     if ( shmctl(shmid_counter, IPC_RMID, NULL) == -1 ) {
         perror("shmctl");
         abort();
@@ -316,7 +320,7 @@ void* createRequest(unsigned int imageSequence){
     sem_wait(&pstack->spaces_sem);
     sem_wait(&pstack->buffer_sem);
     printf("Start pushing\n");
-    printf("Image Seq: %d\n", recv.seq);
+    printf("Image Seq: %d\n", recv_buf.seq);
     push(pstack, &recv_buf);
     sem_post(&pstack->items_sem);
     sem_post(&pstack->buffer_sem);    
