@@ -16,12 +16,6 @@
 
 #include "../lab1/starter/png_util/zutil.h"    /* for mem_def() and mem_inf() */
 
-#define INCRE_SEM "/increSemr"
-#define CON_SEM "/conSem3asd"
-#define BUFFER_SEM "/bufferSem323w"
-#define ITEMS_SEM "/itemsSem1000"
-#define SPACES_SEM "/SpacesSem312"
-
 #define BUF_SIZE 10000  /* 1024*1024 = 1M */
 
 #define BUF_INC  500   /* 1024*512  = 0.5M */
@@ -68,14 +62,11 @@ args arguments;
 
 // Shared memory declarations
 int* current_image_to_fetch;
-
 struct int_stack *pstack;
-
-unsigned char *png_buffer = NULL;
+RECV_BUF* png_buffer;
+int* consumedCount;
 
 size_t size_of_png_buffer = 0;
-
-void signal_handler(int sig);
 
 // void processInput(char *command, char *value, args* destination);
 void initalizeArguments(args* argument);
@@ -85,8 +76,9 @@ int recv_buf_init(RECV_BUF *ptr, size_t max_size);
 void get_png_data_IDAT(unsigned char *out, unsigned char *mem_data, long offset, int idat_data_length);
 void write_png(unsigned char *IDAT_concat_Data_def, unsigned int total_height, unsigned int pngWidth, size_t IDAT_Concat_Data_Def_Len);
 unsigned char* concatenate_png(unsigned char *png_buffer ,unsigned char *array_to_concat, size_t size_of_array_to_concat, size_t *size_of_png_buffer);
-void cat_png(RECV_BUF** image);
-uint32_t get_png_idat_data_length(const uint8_t *memory);
+void cat_png(RECV_BUF* image);
+unsigned int get_png_idat_data_length(const unsigned char* png);
+void write_to_PNG_buffer(int shmid, RECV_BUF* image);
 
 size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata); 
 size_t write_cb_curl(char *p_recv, size_t size, size_t nmemb, void *p_userdata);
@@ -94,6 +86,7 @@ size_t write_cb_curl(char *p_recv, size_t size, size_t nmemb, void *p_userdata);
 // Shared memory stuff
 int shmid_stack;
 int shmid_counter;
+int shmid_final_png_buffer;
 
 int producerCheckAndSet() {
     unsigned int return_val;
@@ -107,9 +100,12 @@ int producerCheckAndSet() {
 
 void processInput(int argc, char *argv[], args* destination);
 
+char **sharedArray;
+
 int main(int argc, char* argv[]){
     // Current image segment to fetch
     unsigned int itt;
+    size_t IDAT_Concat_Data_Def_Len = 0;
 
     // Process input to exe.
     processInput(argc, argv, &arguments);
@@ -125,23 +121,52 @@ int main(int argc, char* argv[]){
         perror("Failed to create stack");
         exit(1);
     };
-    shmdt(pstack);
     
     // Creating shared counter
-    int shmid_counter = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
+    shmid_counter = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
     current_image_to_fetch = shmat(shmid_counter, NULL, 0);
     *current_image_to_fetch = 0;
 
-    // int shmid_consumer = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-    // images_consumed = shmat(shmid_consumer, NULL, 0);
-    // *images_consumed = 50;
+    // Created 
+    shmid_final_png_buffer  = shmget(IPC_PRIVATE, 400*6*50, IPC_CREAT | 0666);
+    png_buffer = shmat(shmid_final_png_buffer, NULL, 0);
 
-    // Buffer semaphore. Used to allow only one proccess to read the buffer at a time.
+    int shmid;
+    key_t key = 12345; // Unique key for the shared memory segment
+
+    // Create a shared memory segment
+    shmid = shmget(key, sizeof(char *) * 50, 0666 | IPC_CREAT);
+    if (shmid == -1) {
+        perror("shmget");
+        exit(1);
+    }
+
+    // Attach the shared memory segment to your program's address space
+    sharedArray = (char **)shmat(shmid, NULL, 0);
+    if (sharedArray == (char **)-1) {
+        perror("shmat");
+        exit(1);
+    }
+     // Initialize the array of arrays
+    for (int i = 0; i < 50; i++) {
+        sharedArray[i] = (char *)shmat(shmget(IPC_PRIVATE, sizeof(char) * 10, 0666 | IPC_CREAT), NULL, 0);
+        for (char j = 0; j < 10; j++) {
+            sharedArray[i][j] = i * 10 + j;
+        }
+    }
+
+    // Access and print the shared data
+    // for (int i = 0; i < 50; i++) {
+    //     for (int j = 0; j < 10; j++) {
+    //         printf("%d ", sharedArray[i][j]);
+    //     }
+    //     printf("\n");
+    // }
+    // exit(0);
 
     for (int i = 0; i < arguments.numProducers; ++i){
         pid = fork();
         if (pid == 0) {
-            pstack = shmat(shmid_stack, NULL, 0);
             while (1) {
                 sem_wait(&pstack->sem);
                 itt = producerCheckAndSet();
@@ -158,31 +183,29 @@ int main(int argc, char* argv[]){
         }
     }
 
+    unsigned int count = 0;
     for (int i =0; i < arguments.numConsumers; ++i){
         pid = fork();
         //if child
         if (pid == 0){
-            pstack = shmat(shmid_stack, NULL, 0);
             while (1) {
-                RECV_BUF* image = malloc(sizeof(RECV_BUF));
+                RECV_BUF image;
+                if (sem_trywait(&pstack->consumedCount)) {
+                    exit(0);
+                }
                 sem_wait(&pstack->items_sem);
                 // binary sempahor
                 sem_wait(&pstack->buffer_sem);
-                if (*current_image_to_fetch == 50 && !is_empty(pstack)){
-                    printf("Popping Exiting\n");
-                    sem_post(&pstack->buffer_sem);
-                    sem_post(&pstack->spaces_sem);
-                    exit(0);
-                }
-                pop(pstack, image);
-                printf("Image seq: %d\n", image->seq);
+                pop(pstack, &image);
+                printf("THERE: %s\n", sharedArray[image.seq]);
+            
                 sem_post(&pstack->buffer_sem);
                 sem_post(&pstack->spaces_sem);
+                
                 // cat_png(image);
-                free(image);
+
+                // free(image);
             }
-            shmdt(pstack);
-            exit(0);
         }
 
     }
@@ -190,7 +213,7 @@ int main(int argc, char* argv[]){
     // Wait for all processes to end
     while(wait(NULL) > 0){};
 
-    // Compress the new concancated IDAT data.
+    // // Compress the new concancated IDAT data.
     // unsigned char *IDAT_Concat_Data_Def = malloc(400*(300 * 4 + 1));
     // mem_def(IDAT_Concat_Data_Def, &IDAT_Concat_Data_Def_Len, png_buffer, size_of_png_buffer, Z_DEFAULT_COMPRESSION);
     
@@ -205,6 +228,7 @@ int main(int argc, char* argv[]){
     sem_destroy(&pstack->items_sem);
     sem_destroy(&pstack->spaces_sem);
     sem_destroy(&pstack->sem);
+    sem_destroy(&pstack->consumedCount);
     
     shmdt(pstack);
     if ( shmctl(shmid_stack, IPC_RMID, NULL) == -1 ) {
@@ -218,50 +242,53 @@ int main(int argc, char* argv[]){
         abort();
     }
 
+    shmdt(png_buffer);
+    if ( shmctl(shmid_final_png_buffer, IPC_RMID, NULL) == -1 ) {
+        perror("shmctl");
+        abort();
+    }
+
     return 0;
 }
 
-void cat_png(RECV_BUF** image) { 
-    RECV_BUF* def_image = *image;
-    U64 IDAT_Data_inf_len = 0; /* uncompressed data length */
-    // size_t IDAT_Concat_Data_Def_Len = 0;
-    // for (size_t i = 0; i < 50; i++){
-        
-    // Now that we have IHDR data, need to retrieve IDAT data. IDAT buffer size = Height * (Width * 4 + 1)
-    int IDAT_inf_length = 400 * (6 * 4 + 1);
-    unsigned char *IDAT_data_inf = malloc(IDAT_inf_length);
-    unsigned int IDAT_Data_def_len = get_png_idat_data_length(def_image->buf);
-    unsigned char *IDAT_data_def = malloc(IDAT_Data_def_len);
+// void cat_png(RECV_BUF* image) { 
+//     U64 IDAT_Data_inf_len = 0; /* uncompressed data length */
+//     size_t IDAT_Concat_Data_Def_Len = 0;        
+//     // Now that we have IHDR data, need to retrieve IDAT data. IDAT buffer size = Height * (Width * 4 + 1)
+//     int IDAT_inf_length = 400 * (6 * 4 + 1);
+//     unsigned char *IDAT_data_inf = malloc(IDAT_inf_length);
+//     unsigned int IDAT_Data_def_len = get_png_idat_data_length(image->buf);
+//     unsigned char *IDAT_data_def = malloc(IDAT_Data_def_len);
 
-    get_png_data_IDAT(IDAT_data_def, def_image->buf, IDAT_OFFSET_BYTES+8, IDAT_Data_def_len);
+//     get_png_data_IDAT(IDAT_data_def, image->buf, IDAT_OFFSET_BYTES+8, IDAT_Data_def_len);
 
-    // decompressing IDAT data.
-    mem_inf(IDAT_data_inf, &IDAT_Data_inf_len, IDAT_data_def, IDAT_Data_def_len);
+//     // decompressing IDAT data.
+//     mem_inf(IDAT_data_inf, &IDAT_Data_inf_len, IDAT_data_def, IDAT_Data_def_len);
 
-    png_buffer = concatenate_png(png_buffer, IDAT_data_inf, IDAT_Data_inf_len, &size_of_png_buffer);
+//     png_buffer = concatenate_png(png_buffer, IDAT_data_inf, IDAT_Data_inf_len, &size_of_png_buffer);
 
-    free(IDAT_data_inf);
-    free(IDAT_data_def);
-    // }
-
-
-    // Compress the new concancated IDAT data.
-    // unsigned char *IDAT_Concat_Data_Def = malloc(400*(300 * 4 + 1));
-    // mem_def(IDAT_Concat_Data_Def, &IDAT_Concat_Data_Def_Len, png_buffer, size_of_png_buffer, Z_DEFAULT_COMPRESSION);
-    
-    // write_png(IDAT_Concat_Data_Def, 300, 400, IDAT_Concat_Data_Def_Len);
-
-    // free(IDAT_Concat_Data_Def);
-    // free(png_buffer);
-}
+//     free(IDAT_data_inf);
+//     free(IDAT_data_def);
+// }
 
 void get_png_data_IDAT(unsigned char *out, unsigned char *mem_data, long offset, int idat_data_length){
+    for (int i = 0; i < idat_data_length; i++) {
+        out[i] = mem_data[i + offset];
+    }
 }
 
-uint32_t get_png_idat_data_length(const uint8_t *memory){
-    return 0;
-}
+// unsigned int get_png_idat_data_length(const unsigned char* png){
 
+//     unsigned int idat_data_length = 0;
+
+//     // Extract the length from memory
+//     memcpy(&idat_data_length, png + IDAT_OFFSET_BYTES, 4);
+
+//     // Convert native little endian to big endian and return the number
+//     return htonl(idat_data_length);
+// }
+
+// Should append to the shared memory.
 unsigned char* concatenate_png(unsigned char *png_buffer ,unsigned char *array_to_concat, size_t size_of_array_to_concat, size_t *size_of_png_buffer){
     return NULL;
 }
@@ -284,6 +311,8 @@ void processInput(int argc, char *argv[], args* destination){
 void* createRequest(unsigned int imageSequence){
     // THREAD_ARGS* threadArgs = (THREAD_ARGS*) args;
     RECV_BUF recv_buf;
+    RECV_BUF dummy;
+    
 
     CURL* curl_handle;
     curl_handle = curl_easy_init();
@@ -316,15 +345,21 @@ void* createRequest(unsigned int imageSequence){
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 
     recv_buf_init(&recv_buf, BUF_SIZE);
+    sharedArray[recv_buf.seq] = recv_buf.buf;
+    // printf("%d, HERE: %s\n", recv_buf.buf);
     CURLcode res = curl_easy_perform(curl_handle);
+    // printf("johnn2: %s\n", recv_buf.buf);
 
     // While stack is full, perform busy-waiting till a spot opens up
 
     // Has image, write to pngbuffer
     sem_wait(&pstack->spaces_sem);
     sem_wait(&pstack->buffer_sem);
-    printf("Start pushing\n");
-    printf("Image Seq: %d\n", recv_buf.seq);
+    printf("Start pushing img seq: %d\n", recv_buf.seq);
+    // printf("Image Seq: %d\n", recv_buf.seq);
+    push(pstack, &recv_buf);
+    pop(pstack, &dummy);
+    // printf("johnn3: %s\n", dummy.buf);
     push(pstack, &recv_buf);
     sem_post(&pstack->items_sem);
     sem_post(&pstack->buffer_sem);    

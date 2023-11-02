@@ -26,6 +26,7 @@ typedef struct int_stack
     sem_t buffer_sem;
     sem_t items_sem;
     sem_t spaces_sem;
+    sem_t consumedCount;
 } ISTACK;
 
 

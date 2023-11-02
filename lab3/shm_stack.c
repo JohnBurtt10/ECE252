@@ -24,7 +24,7 @@
 
 int sizeof_shm_stack(int size)
 {
-    return (sizeof(ISTACK) + sizeof(RECV_BUF*) * size);
+    return (sizeof(ISTACK) + (sizeof(RECV_BUF) + 10000) * size);
 }
 
 /**
@@ -51,6 +51,7 @@ int init_shm_stack(ISTACK *p, int stack_size)
     sem_init(&p->items_sem, 1, 0);
     sem_init(&p->buffer_sem, 1, 1);
     sem_init(&p->spaces_sem, 1, stack_size);
+    sem_init(&p->consumedCount, 1, 50);
 
     return 0;
 }
@@ -123,6 +124,9 @@ int is_empty(ISTACK *p)
     if ( p == NULL ) {
         return 0;
     }
+    
+    printf("p->pos: %d\n", p->pos);
+
     return ( p->pos == -1 );
 }
 
