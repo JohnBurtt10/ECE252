@@ -44,7 +44,7 @@ int init_shm_stack(ISTACK *p, int stack_size)
 
     p->size = stack_size;
     p->pos  = -1;
-    p->items = (RECV_BUF **) ((char *)p + sizeof(ISTACK));
+    p->items = (RECV_BUF *) ((char *)p + sizeof(ISTACK));
     //p->sem (sem_t)
     //init semaphores
     sem_init(&p->sem, 1, 1);
@@ -78,7 +78,7 @@ ISTACK *create_stack(int size)
         perror("malloc");
     } else {
         char *p = (char *)pstack;
-        pstack->items = (RECV_BUF **) (p + sizeof(ISTACK));
+        pstack->items = (RECV_BUF *) (p + sizeof(ISTACK));
         pstack->size = size;
         pstack->pos  = -1;
     }
@@ -141,7 +141,7 @@ int push(ISTACK *p, RECV_BUF* image)
 
     if ( !is_full(p) ) {
         ++(p->pos);
-        p->items[p->pos] = image;
+        p->items[p->pos] = *image;
         return 0;
     } else {
         return -1;
@@ -167,7 +167,7 @@ int pop(ISTACK *p, RECV_BUF* image)
     
 
     if (!is_empty(p)) {
-        *image = *(p->items[p->pos]);
+        *image = p->items[p->pos];
         (p->pos)--; // Assuming your stack is 0-based.
         return 0;
     } else {

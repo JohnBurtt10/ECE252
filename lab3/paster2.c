@@ -119,15 +119,16 @@ int main(int argc, char* argv[]){
 
     // Creating shared memory stack
     int shm_size =  sizeof_shm_stack(arguments.bufferSize);
-    shmid_stack = shmget(IPC_PRIVATE, shm_size, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR); 
+    shmid_stack = shmget(IPC_PRIVATE, shm_size, IPC_CREAT | 0666); 
     pstack = shmat(shmid_stack, NULL, 0);
     if (init_shm_stack(pstack, arguments.bufferSize)){
         perror("Failed to create stack");
         exit(1);
     };
+    shmdt(pstack);
     
     // Creating shared counter
-    int shmid_counter = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+    int shmid_counter = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
     current_image_to_fetch = shmat(shmid_counter, NULL, 0);
     *current_image_to_fetch = 0;
 
@@ -140,7 +141,7 @@ int main(int argc, char* argv[]){
     for (int i = 0; i < arguments.numProducers; ++i){
         pid = fork();
         if (pid == 0) {
-        
+            pstack = shmat(shmid_stack, NULL, 0);
             while (1) {
                 sem_wait(&pstack->sem);
                 itt = producerCheckAndSet();
@@ -151,6 +152,7 @@ int main(int argc, char* argv[]){
                 }
                 createRequest(itt);
             }
+            shmdt(pstack);
             
             exit(0);
         }
@@ -160,6 +162,7 @@ int main(int argc, char* argv[]){
         pid = fork();
         //if child
         if (pid == 0){
+            pstack = shmat(shmid_stack, NULL, 0);
             while (1) {
                 RECV_BUF* image = malloc(sizeof(RECV_BUF));
                 sem_wait(&pstack->items_sem);
@@ -178,6 +181,7 @@ int main(int argc, char* argv[]){
                 // cat_png(image);
                 free(image);
             }
+            shmdt(pstack);
             exit(0);
         }
 

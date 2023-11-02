@@ -21,7 +21,7 @@ typedef struct int_stack
 {
     int size;               /* the max capacity of the stack */
     int pos;                /* position of last item pushed onto the stack */
-    RECV_BUF** items;             /* stack of stored buffers */
+    RECV_BUF* items;             /* stack of stored buffers */
     sem_t sem;
     sem_t buffer_sem;
     sem_t items_sem;
