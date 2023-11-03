@@ -54,6 +54,8 @@ int init_shm_stack(IMGSTACK *p, int stack_size)
     sem_init(&p->items_sem, 1, 0);
     sem_init(&p->buffer_sem, 1, 1);
     sem_init(&p->spaces_sem, 1, stack_size);
+    sem_init(&p->pushImage_sem, 1, 1);
+    sem_init(&p->consumedCount_sem, 1 , 50);
 
     return 0;
 }
@@ -144,9 +146,9 @@ int push(IMGSTACK *p, RECV_BUF* image)
 
     if ( !is_full(p) ) {
         p->pos = p->pos + 10000;
-        memcpy(p->imageData + p->pos, image->buf, 10000);
-        memcpy(&p->imageSeq[p->imageSeqPos], &image->seq, sizeof(int));
         p->imageSeqPos++;
+        memcpy(p->imageData + p->pos, image->buf, 10000);
+        p->imageSeq[p->imageSeqPos] = image->seq;
         return 0;
     } else {
         return -1;
