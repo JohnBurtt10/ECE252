@@ -13,7 +13,7 @@ typedef struct recv_buf2 {
     size_t size;     /* size of valid data in buf in bytes*/
     int seq;         /* >=0 sequence number extracted from http header */
                      /* <0 indicates an invalid seq number */
-    char buf[10000];       /* Image cannot exceed 10,000 bytes */
+    unsigned char buf[10000];       /* Image cannot exceed 10,000 bytes */
 } RECV_BUF;
 
 typedef struct image_stack
@@ -29,6 +29,7 @@ typedef struct image_stack
     sem_t spaces_sem; // Track amount of free space in buffer to block producers
     sem_t pushImage_sem; // Allow one process at a time to access the decompressed image buffer
     sem_t consumedCount_sem; // Track how many images the consumers have produced. If 0, consumers are done.
+    sem_t incrementIDATLen_sem;
 } IMGSTACK;
 
 

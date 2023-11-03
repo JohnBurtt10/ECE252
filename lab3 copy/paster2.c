@@ -65,7 +65,7 @@ char* urls[3][3] =
 
 args arguments;
 int imageSegmentSize_decompressed = HEADER_SIZE + IHDR_SIZE + (IDAT_SIZE_UNCOMPRESSED) + IEND_SIZE;
-int imageSegmentIDAT_uncompressed_size = 12 + (400*(6*4 + 1));
+int imageSegmentIDAT_uncompressed_size = 400*(6*4) + 6; // Why da fuck
 
 void signal_handler(int sig);
 
@@ -93,13 +93,17 @@ size_t write_cb_curl(char *p_recv, size_t size, size_t nmemb, void *p_userdata);
 IMGSTACK* pstack;
 int* imageToFetch;
 char* uncompressedIDATs;
+unsigned long* idatLength;
 /* Shared memory ID's */
 int shmid_stack;
 int shmid_imageToFetch;
 int shmid_uncompressedIDATs;
+int shmid_idatLength;
 
 int main(int argc, char* argv[]){
     processInput(argc, argv, &arguments);
+
+    unsigned int itt;
 
     // Testing stack
     //test_stack();
@@ -120,9 +124,14 @@ int main(int argc, char* argv[]){
     *imageToFetch = 0;
 
     // Creating shared memory to store image segments that have been decompressed by consumers
-    shmid_uncompressedIDATs = shmget(IPC_PRIVATE, sizeof(char) * imageSegmentIDAT_uncompressed_size * 50, IPC_CREAT | 0666);
+    shmid_uncompressedIDATs = shmget(IPC_PRIVATE, imageSegmentIDAT_uncompressed_size * 50, IPC_CREAT | 0666);
     uncompressedIDATs = shmat(shmid_uncompressedIDATs, NULL, 0);
-    memset(uncompressedIDATs, 0, sizeof(char) * imageSegmentIDAT_uncompressed_size * 50); // Setting shared memory data to all zero.
+    memset(uncompressedIDATs, 0, imageSegmentIDAT_uncompressed_size * 50); // Setting shared memory data to all zero.
+
+    // Creating shared memory to track true idat size
+    shmid_idatLength = shmget(IPC_PRIVATE, sizeof(unsigned long), IPC_CREAT | 0666);
+    idatLength = shmat(shmid_idatLength, NULL, 0);
+    *idatLength = 0;
 
     // Create producers
     for(int i = 0; i < arguments.numProducers; ++i){
@@ -131,14 +140,16 @@ int main(int argc, char* argv[]){
         // child
         if (pid == 0){
             while(1){
-                int itt = 0;
-                // return current stored image count, then increment by one.
+                // return current stored image count, then increment by one
+                sem_wait(&pstack->imageToFetch_sem);
                 itt = producerCheckAndSet();
+                sem_post(&pstack->imageToFetch_sem);
                 
                 // Check if we have fetched all 50 images.
                 if (itt == -1){
                     exit(0);
                 }
+
                 // Crete fetch request and push to stack.
                 createRequest(itt);
             }
@@ -155,15 +166,17 @@ int main(int argc, char* argv[]){
 
                 // If the decrement cannot be performed, it will return EAGAIN, thus we exit.
                 if (sem_trywait(&pstack->consumedCount_sem)) {
-                    printf("Process: %d has exited\n", getpid());
                     exit(0);
                 }
 
                 // Pop image from stack/shared buffer
                 popFromStack(image);
+                printf("IMAGE SEQ: %d\n", image->seq);
 
                 // decompress image and store it in final shared memory location
-                // decompress_and_push(image);
+                sem_wait(&pstack->pushImage_sem);
+                decompress_and_push(image);
+                sem_post(&pstack->pushImage_sem);
 
                 free(image);
             }
@@ -174,7 +187,7 @@ int main(int argc, char* argv[]){
     while(wait(NULL) > 0){};
 
     // Create image.
-    // create_image();
+    create_image();
 
     printf("FINISHED!\n");
 
@@ -192,6 +205,7 @@ void destory_sems(){
     sem_destroy(&pstack->items_sem);
     sem_destroy(&pstack->pushImage_sem);
     sem_destroy(&pstack->consumedCount_sem);
+    sem_destroy(&pstack->incrementIDATLen_sem);
 }
 
 void detach_and_clean(){
@@ -203,6 +217,9 @@ void detach_and_clean(){
 
     shmdt(uncompressedIDATs);
     shmctl(shmid_uncompressedIDATs, IPC_RMID, NULL);
+
+    shmdt(idatLength);
+    shmctl(shmid_idatLength, IPC_RMID, NULL);
 }
 
 void decompress_and_push(RECV_BUF *image){
@@ -212,20 +229,20 @@ void decompress_and_push(RECV_BUF *image){
     size_t size_of_png_buffer = 0;
         
     // Now that we have IHDR data, need to retrieve IDAT data. IDAT buffer size = Height * (Width * 4 + 1)
-    int IDAT_inf_length = 400 * (6 * 4 + 1);
+    int IDAT_inf_length = imageSegmentIDAT_uncompressed_size;
     unsigned char *IDAT_data_inf = malloc(IDAT_inf_length);
     unsigned int IDAT_Data_def_len = get_png_idat_data_length(image->buf);
     unsigned char *IDAT_data_def = malloc(IDAT_Data_def_len);
 
     get_png_data_IDAT(IDAT_data_def, image->buf, IDAT_OFFSET_BYTES+8, IDAT_Data_def_len);
 
-    // decompressing IDAT data.
+    // decompressing IDAT data
     mem_inf(IDAT_data_inf, &IDAT_Data_inf_len, IDAT_data_def, IDAT_Data_def_len);
+    *idatLength += IDAT_Data_inf_len;
+    printf("IDATLENGTHINFLATED: %lu", IDAT_Data_inf_len);
 
-    sem_wait(&pstack->pushImage_sem);
     // Add uncompressed idat data to shared memory.
-    memcpy(uncompressedIDATs + index_decompressed_idats(image->seq), IDAT_data_inf, imageSegmentIDAT_uncompressed_size);
-    sem_post(&pstack->pushImage_sem);
+    memcpy(uncompressedIDATs + index_decompressed_idats(image->seq), IDAT_data_inf, IDAT_Data_inf_len);
 
     free(IDAT_data_inf);
     free(IDAT_data_def);
@@ -235,7 +252,9 @@ void create_image(){
     // First, compress the IDATS.
     size_t IDAT_Concat_Data_Def_Len = 0;
     unsigned char *IDAT_Concat_Data_Def = malloc(400*(300 * 4 + 1));
-    mem_def(IDAT_Concat_Data_Def, &IDAT_Concat_Data_Def_Len, uncompressedIDATs, sizeof(char) * imageSegmentIDAT_uncompressed_size * 50, Z_DEFAULT_COMPRESSION);
+    printf("IDATlength: %lu\n", *idatLength);
+    mem_def(IDAT_Concat_Data_Def, &IDAT_Concat_Data_Def_Len, uncompressedIDATs, *idatLength, Z_DEFAULT_COMPRESSION);
+    printf("IDATDEFLENGTH: %lu\n", IDAT_Concat_Data_Def_Len);
 
     // Second, write the png after compressing idats.
     write_png(IDAT_Concat_Data_Def, 300, 400, IDAT_Concat_Data_Def_Len);
@@ -298,14 +317,12 @@ void recv_buf_init(RECV_BUF *ptr)
 }
 
 int producerCheckAndSet() {
-    sem_wait(&pstack->imageToFetch_sem);
     unsigned int return_val;
     if (*imageToFetch >= 50) { 
         return -1;
     }
     return_val = *imageToFetch;
     *imageToFetch = *imageToFetch + 1;
-    sem_post(&pstack->imageToFetch_sem);
     return return_val;
 }
 

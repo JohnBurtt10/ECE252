@@ -56,6 +56,7 @@ int init_shm_stack(IMGSTACK *p, int stack_size)
     sem_init(&p->spaces_sem, 1, stack_size);
     sem_init(&p->pushImage_sem, 1, 1);
     sem_init(&p->consumedCount_sem, 1 , 50);
+    sem_init(&p->incrementIDATLen_sem, 1, 1);
 
     return 0;
 }
