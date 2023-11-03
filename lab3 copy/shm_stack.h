@@ -10,10 +10,10 @@
  */
 
 typedef struct recv_buf2 {
-    char buf[10000];       /* Image cannot exceed 10,000 bytes */
     size_t size;     /* size of valid data in buf in bytes*/
     int seq;         /* >=0 sequence number extracted from http header */
                      /* <0 indicates an invalid seq number */
+    char buf[10000];       /* Image cannot exceed 10,000 bytes */
 } RECV_BUF;
 
 typedef struct image_stack

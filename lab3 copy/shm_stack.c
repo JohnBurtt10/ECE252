@@ -145,6 +145,7 @@ int push(IMGSTACK *p, RECV_BUF* image)
     if ( !is_full(p) ) {
         p->pos = p->pos + 10000;
         memcpy(p->imageData + p->pos, image->buf, 10000);
+        memcpy(&p->imageSeq[p->imageSeqPos], &image->seq, sizeof(int));
         p->imageSeqPos++;
         return 0;
     } else {
@@ -170,7 +171,7 @@ int pop(IMGSTACK *p, RECV_BUF* image)
 
     if (!is_empty(p)) {
         memcpy(image->buf, p->imageData + p->pos, 10000);
-        image->seq = p->imageSeqPos;
+        image->seq = p->imageSeq[p->imageSeqPos];
 
         p->imageSeqPos--;
         p->pos = p->pos - 10000; // Assuming your stack is 0-based.

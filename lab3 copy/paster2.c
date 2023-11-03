@@ -22,9 +22,11 @@
 
 #define IDAT_OFFSET_BYTES 33 // 33 bytes from start of file to get IDAT chunk start.
 
-#define IHDR_CHUNK_SIZE 25
 
+#define IHDR_SIZE 25
 #define HEADER_SIZE 8
+#define IDAT_SIZE_UNCOMPRESSED 12 + (400*(300*4 + 1))
+#define IEND_SIZE 12
 
 #define ECE252_HEADER "X-Ece252-Fragment: "
 
@@ -59,24 +61,31 @@ char* urls[3][3] =
 };
 
 args arguments;
+int totalImageSize = HEADER_SIZE + IHDR_SIZE + (IDAT_SIZE_UNCOMPRESSED) + IEND_SIZE;
 
 void signal_handler(int sig);
 
 void processInput(int argc, char *argv[], args* destination);
-void destory_sems();
 int producerCheckAndSet();
 void createRequest(unsigned int imageSequence);
+void pushToStack(RECV_BUF* imageData);
 
-int recv_buf_init(RECV_BUF *ptr);
+/* Cleaning functions */
+void destory_sems();
+void detach_and_clean();
+
+void recv_buf_init(RECV_BUF *ptr);
 size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata); 
 size_t write_cb_curl(char *p_recv, size_t size, size_t nmemb, void *p_userdata);
 
 /* Attached memory variables */
 IMGSTACK* pstack;
 int* imageToFetch;
+char* decompressedImage;
 /* Shared memory ID's */
 int shmid_stack;
 int shmid_imageToFetch;
+int shmid_decompressedImages;
 
 int main(int argc, char* argv[]){
     processInput(argc, argv, &arguments);
@@ -99,22 +108,28 @@ int main(int argc, char* argv[]){
     imageToFetch = shmat(shmid_imageToFetch, NULL, 0);
     *imageToFetch = 0;
 
+    // Creating shared memory to store image segments that have been decompressed by consumers
+    shmid_decompressedImages = shmget(IPC_PRIVATE, sizeof(char) * totalImageSize, IPC_CREAT | 0666);
+    decompressedImage = shmat(shmid_decompressedImages, NULL, 0);
+    memset(decompressedImage, 0, sizeof(char) * totalImageSize); // Setting shared memory data to all zero.
+
     // Create producers
     for(int i = 0; i < arguments.numProducers; ++i){
         int pid = fork();
         
         // child
         if (pid == 0){
+            // while(1){
             int itt = 0;
             itt = producerCheckAndSet();
             
-            if (itt == -1){
+            if (itt == arguments.bufferSize || itt == -1){
                 exit(0);
             }
 
-
-
+            createRequest(itt);
             exit(0);
+            // }
         }
     }
 
@@ -122,9 +137,7 @@ int main(int argc, char* argv[]){
     while(wait(NULL) > 0);
 
     // Cleaning up
-    shmdt(pstack);
-    shmctl(shmid_stack, IPC_RMID, NULL);
-
+    detach_and_clean();
     destory_sems();
 
     return 0;
@@ -135,6 +148,17 @@ void destory_sems(){
     sem_destroy(&pstack->spaces_sem);
     sem_destroy(&pstack->imageToFetch_sem);
     sem_destroy(&pstack->items_sem);
+}
+
+void detach_and_clean(){
+    shmdt(pstack);
+    shmctl(shmid_stack, IPC_RMID, NULL);
+
+    shmdt(imageToFetch);
+    shmctl(shmid_imageToFetch, IPC_RMID, NULL);
+
+    shmdt(decompressedImage);
+    shmctl(shmid_decompressedImages, IPC_RMID, NULL);
 }
 
 void processInput(int argc, char *argv[], args* destination){
@@ -150,12 +174,11 @@ void processInput(int argc, char *argv[], args* destination){
     destination->imageToFetch = strtoul(argv[5], NULL, 10);
 }
 
-int recv_buf_init(RECV_BUF *ptr)
+void recv_buf_init(RECV_BUF *ptr)
 {
-    ptr->buf[10000];
+    memset(ptr->buf, 0, 10000);
     ptr->size = 0;
     ptr->seq = -1;              /* valid seq should be non-negative */
-    return 0;
 }
 
 int producerCheckAndSet() {
@@ -166,8 +189,8 @@ int producerCheckAndSet() {
     }
     return_val = *imageToFetch;
     *imageToFetch = *imageToFetch + 1;
-    return return_val;
     sem_post(&pstack->imageToFetch_sem);
+    return return_val;
 }
 
 void createRequest(unsigned int image_segment){
@@ -183,7 +206,7 @@ void createRequest(unsigned int image_segment){
 
     char url[60];
 
-    sprintf(url, "%s%d", urls[image_segment%3][arguments.imageToFetch-1], image_segment);
+    sprintf(url, "%s%d", urls[image_segment%3 + 1][arguments.imageToFetch-1], image_segment);
 
     printf("processID # %d fetching image strip: %d\n", getpid(), image_segment);
 
@@ -203,11 +226,27 @@ void createRequest(unsigned int image_segment){
     /* some servers requires a user-agent field */
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 
+    recv_buf_init(&recv_buf);
     CURLcode res = curl_easy_perform(curl_handle);
+
+    pushToStack(&recv_buf);
+
+    // free(recv_buf);
 
     curl_easy_cleanup(curl_handle);
 
     return;
+}
+
+// Push the image to the stack only when the stack/buffer is not full and the producer has access to it.
+void pushToStack(RECV_BUF* imageData){
+    // sem_wait(&pstack->spaces_sem);
+    sem_wait(&pstack->buffer_sem);
+    printf("Start pushing img seq: %d\n", imageData->seq);
+    push(pstack, imageData);
+    // sem_post(&pstack->items_sem);
+    sem_post(&pstack->buffer_sem);    
+    printf("Done pushing\n");
 }
 
 // ptr points to the delivered data, and the size of that data is nmemb; size is always 1. 
@@ -226,8 +265,10 @@ size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata){
     int realsize = size * nmemb;
     RECV_BUF *p = userdata;
     
+    // printf("Realsize: %d, strlen: %lu, strncmp: %d\n", realsize, strlen(ECE252_HEADER), strncmp(p_recv, ECE252_HEADER, strlen(ECE252_HEADER)));
     if (realsize > strlen(ECE252_HEADER) && strncmp(p_recv, ECE252_HEADER, strlen(ECE252_HEADER)) == 0) {
         /* extract img sequence number */
+        printf("Seq_num: %d\n", atoi(p_recv + strlen(ECE252_HEADER)));
 	    p->seq = atoi(p_recv + strlen(ECE252_HEADER));
     }
 
