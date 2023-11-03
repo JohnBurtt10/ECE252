@@ -50,7 +50,7 @@ int init_shm_stack(IMGSTACK *p, int stack_size)
     p->imageData = (char *) ((char *)p + sizeof(IMGSTACK) + (sizeof(int*) * stack_size)); // Point immedatiely after imageseq array.
 
     //init semaphores
-    sem_init(&p->sem, 1, 1);
+    sem_init(&p->imageToFetch_sem, 1, 1);
     sem_init(&p->items_sem, 1, 0);
     sem_init(&p->buffer_sem, 1, 1);
     sem_init(&p->spaces_sem, 1, stack_size);
@@ -126,7 +126,7 @@ int is_empty(IMGSTACK *p)
     if ( p == NULL ) {
         return 0;
     }
-    return ( p->pos == -1 );
+    return ( p->pos == -10000 );
 }
 
 /**

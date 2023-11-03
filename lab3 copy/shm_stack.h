@@ -23,7 +23,7 @@ typedef struct image_stack
     int imageSeqPos;        /* position of last image sequence pushed onto the stack */
     int* imageSeq;          /* Image Sequence*/
     char* imageData;        /* Image Data */
-    sem_t sem;
+    sem_t imageToFetch_sem;
     sem_t buffer_sem;
     sem_t items_sem;
     sem_t spaces_sem;
