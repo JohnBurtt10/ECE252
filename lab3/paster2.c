@@ -129,6 +129,15 @@ int main(int argc, char* argv[]){
     IDAT_sizes_array = shmat(shmid_IDAT_sizes_array, NULL, 0);
     memset(IDAT_sizes_array, 0, sizeof(size_t) * 50);
 
+    double times[2];
+    struct timeval tv;
+
+    if (gettimeofday(&tv, NULL) != 0) {
+        perror("gettimeofday");
+        abort();
+    }
+    times[0] = (tv.tv_sec) + tv.tv_usec/1000000.;
+
     // Create producers
     for(int i = 0; i < arguments.numProducers; ++i){
         int pid = fork();
@@ -146,6 +155,9 @@ int main(int argc, char* argv[]){
                     detach_shm();
                     exit(0);
                 }
+
+                // Wait for the shared buffer to have a spot
+                sem_wait(&pstack->spaces_sem);
 
                 // Crete fetch request and push to stack.
                 createRequest(itt);
@@ -171,6 +183,9 @@ int main(int argc, char* argv[]){
                 // Pop image from stack/shared buffer
                 popFromStack(image);
 
+                // Sleep for X milliseconds
+                sleep(arguments.numMilliseconds*1000);
+
                 // decompress image and store it in final shared memory location
                 sem_wait(&pstack->pushImage_sem);
                 decompress_and_push(image);
@@ -186,6 +201,13 @@ int main(int argc, char* argv[]){
 
     // Create image.
     create_image();
+
+     if (gettimeofday(&tv, NULL) != 0) {
+            perror("gettimeofday");
+            abort();
+        }
+        times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
+        printf("Parent pid = %d: total execution time is %.6lf seconds\n", getpid(),  times[1] - times[0]);
 
     // Cleaning up
     detach_and_clean_shm();
@@ -337,7 +359,7 @@ void createRequest(unsigned int image_segment){
 
     char url[60];
 
-    sprintf(url, "%s%d", urls[1][arguments.imageToFetch-1], image_segment);
+    sprintf(url, "%s%d", urls[2][arguments.imageToFetch-1], image_segment);
 
     // printf("processID # %d fetching image strip: %d\n", getpid(), image_segment);
 
@@ -376,7 +398,6 @@ void createRequest(unsigned int image_segment){
 
 // Push the image to the stack only when the stack/buffer is not full and the producer has access to it.
 void pushToStack(RECV_BUF* imageData){
-    sem_wait(&pstack->spaces_sem);
     sem_wait(&pstack->buffer_sem);
     // printf("Start pushing img seq: %d\n", imageData->seq);
     push(pstack, imageData);
