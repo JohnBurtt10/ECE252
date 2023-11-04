@@ -59,9 +59,7 @@ char* urls[3][3] =
 
 args arguments;
 int imageSegmentSize_decompressed = HEADER_SIZE + IHDR_SIZE + (IDAT_SIZE_UNCOMPRESSED) + IEND_SIZE;
-int imageSegmentIDAT_uncompressed_size = 400*(6*4 + 1); // Why da fuck
-
-void signal_handler(int sig);
+int imageSegmentIDAT_uncompressed_size = 400*(6*4 + 1);
 
 void processInput(int argc, char *argv[], args* destination);
 int producerCheckAndSet();
@@ -77,7 +75,8 @@ void write_png(unsigned char *IDAT_concat_Data_def, unsigned int total_height, u
 
 /* Cleaning functions */
 void destroy_sems();
-void detach_and_clean();
+void detach_and_clean_shm();
+void detach_shm();
 
 void recv_buf_init(RECV_BUF *ptr);
 size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata); 
@@ -144,6 +143,7 @@ int main(int argc, char* argv[]){
                 
                 // Check if we have fetched all 50 images.
                 if (itt == -1){
+                    detach_shm();
                     exit(0);
                 }
 
@@ -163,12 +163,13 @@ int main(int argc, char* argv[]){
 
                 // If the decrement cannot be performed, it will return EAGAIN, thus we exit.
                 if (sem_trywait(&pstack->consumedCount_sem)) {
+                    free(image);
+                    detach_shm();
                     exit(0);
                 }
 
                 // Pop image from stack/shared buffer
                 popFromStack(image);
-                // printf("IMAGE SEQ: %d\n", image->seq);
 
                 // decompress image and store it in final shared memory location
                 sem_wait(&pstack->pushImage_sem);
@@ -187,7 +188,7 @@ int main(int argc, char* argv[]){
     create_image();
 
     // Cleaning up
-    detach_and_clean();
+    detach_and_clean_shm();
     destroy_sems();
 
     return 0;
@@ -202,7 +203,15 @@ void destroy_sems(){
     sem_destroy(&pstack->consumedCount_sem);
 }
 
-void detach_and_clean(){
+void detach_shm(){
+    shmdt(pstack);
+    shmdt(imageToFetch);
+    shmdt(uncompressedIDATs);
+    shmdt(idatLength);
+    shmdt(IDAT_sizes_array);
+}
+
+void detach_and_clean_shm(){
     shmdt(pstack);
     shmctl(shmid_stack, IPC_RMID, NULL);
 
@@ -296,20 +305,6 @@ void processInput(int argc, char *argv[], args* destination){
     destination->numConsumers = strtoul(argv[3], NULL, 10);
     destination->numMilliseconds = strtoul(argv[4], NULL, 10);
     destination->imageToFetch = strtoul(argv[5], NULL, 10);
-}
-
-void saveImages(){
-    // popping stack and printing contents
-    for(int i = 0; i < arguments.numProducers; i++){
-        RECV_BUF image;
-        char test[50];
-        pop(pstack, &image);
-
-        sprintf(test, "%d.png", image.seq);
-        FILE *fp = fopen(test, "wb");
-        fwrite(image.buf, 1, 10000, fp);
-        fclose(fp);
-    }
 }
 
 void recv_buf_init(RECV_BUF *ptr)
