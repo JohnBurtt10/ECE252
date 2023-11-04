@@ -47,7 +47,7 @@ int init_shm_stack(IMGSTACK *p, int stack_size)
     p->pos  = -10000;
     p->imageSeqPos = -1;
     p->imageSeq = (int*) ((char *)p + sizeof(IMGSTACK));
-    p->imageData = (char *) ((char *)p + sizeof(IMGSTACK) + (sizeof(int*) * stack_size)); // Point immedatiely after imageseq array.
+    p->imageData = (unsigned char *) ((char *)p + sizeof(IMGSTACK) + (sizeof(int*) * stack_size)); // Point immedatiely after imageseq array.
 
     //init semaphores
     sem_init(&p->imageToFetch_sem, 1, 1);

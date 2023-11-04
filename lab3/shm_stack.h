@@ -21,7 +21,7 @@ typedef struct image_stack
     int pos;                /* position of last item pushed onto the stack */
     int imageSeqPos;        /* position of last image sequence pushed onto the stack */
     int* imageSeq;          /* Image Sequence*/
-    char* imageData;        /* Image Data */
+    unsigned char* imageData;        /* Image Data */
     sem_t imageToFetch_sem; // Allow one producer at a time to increment image counter.
     sem_t buffer_sem; // Allow one process at a time to acccess stack/buffer.
     sem_t items_sem;  // track amount of items currently in buffer/stack to block consumers
