@@ -184,7 +184,7 @@ int main(int argc, char* argv[]){
                 popFromStack(image);
 
                 // Sleep for X milliseconds
-                sleep(arguments.numMilliseconds*1000);
+                sleep(arguments.numMilliseconds/1000);
 
                 // decompress image and store it in final shared memory location
                 sem_wait(&pstack->pushImage_sem);
@@ -207,7 +207,7 @@ int main(int argc, char* argv[]){
             abort();
         }
         times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
-        printf("Parent pid = %d: total execution time is %.6lf seconds\n", getpid(),  times[1] - times[0]);
+        printf("paster2 execution time: %.6lf seconds\n",  times[1] - times[0]);
 
     // Cleaning up
     detach_and_clean_shm();
