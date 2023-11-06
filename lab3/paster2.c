@@ -359,7 +359,7 @@ void createRequest(unsigned int image_segment){
 
     char url[60];
 
-    sprintf(url, "%s%d", urls[2][arguments.imageToFetch-1], image_segment);
+    sprintf(url, "%s%d", urls[image_segment%3][arguments.imageToFetch-1], image_segment);
 
     // printf("processID # %d fetching image strip: %d\n", getpid(), image_segment);
 
