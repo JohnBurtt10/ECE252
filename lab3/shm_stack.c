@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <semaphore.h>
 #include "shm_stack.h"
+#include <string.h>
 
 /**
  * @brief calculate the total memory that the struct int_stack needs and
@@ -24,7 +25,7 @@
 
 int sizeof_shm_stack(int size)
 {
-    return (sizeof(ISTACK) + sizeof(RECV_BUF*) * size);
+    return (sizeof(IMGSTACK) + (sizeof(RECV_BUF) + 10000) * size);
 }
 
 /**
@@ -36,21 +37,25 @@ int sizeof_shm_stack(int size)
  * The caller first calls sizeof_shm_stack() to allocate enough memory;
  * then calls the init_shm_stack to initialize the struct
  */
-int init_shm_stack(ISTACK *p, int stack_size)
+int init_shm_stack(IMGSTACK *p, int stack_size)
 {
     if ( p == NULL || stack_size == 0 ) {
         return 1;
     }
 
     p->size = stack_size;
-    p->pos  = -1;
-    p->items = (RECV_BUF *) ((char *)p + sizeof(ISTACK));
-    //p->sem (sem_t)
+    p->pos  = -10000;
+    p->imageSeqPos = -1;
+    p->imageSeq = (int*) ((char *)p + sizeof(IMGSTACK));
+    p->imageData = (unsigned char *) ((char *)p + sizeof(IMGSTACK) + (sizeof(int*) * stack_size)); // Point immedatiely after imageseq array.
+
     //init semaphores
-    sem_init(&p->sem, 1, 1);
+    sem_init(&p->imageToFetch_sem, 1, 1);
     sem_init(&p->items_sem, 1, 0);
     sem_init(&p->buffer_sem, 1, 1);
     sem_init(&p->spaces_sem, 1, stack_size);
+    sem_init(&p->pushImage_sem, 1, 1);
+    sem_init(&p->consumedCount_sem, 1 , 50);
 
     return 0;
 }
@@ -62,10 +67,10 @@ int init_shm_stack(ISTACK *p, int stack_size)
  * @return NULL if size is 0 or malloc fails
  */
 
-ISTACK *create_stack(int size)
+IMGSTACK *create_stack(int size)
 {
     int mem_size = 0;
-    ISTACK *pstack = NULL;
+    IMGSTACK *pstack = NULL;
     
     if ( size == 0 ) {
         return NULL;
@@ -78,7 +83,7 @@ ISTACK *create_stack(int size)
         perror("malloc");
     } else {
         char *p = (char *)pstack;
-        pstack->items = (RECV_BUF *) (p + sizeof(ISTACK));
+        pstack->imageData = (char *) (p + sizeof(IMGSTACK));
         pstack->size = size;
         pstack->pos  = -1;
     }
@@ -91,7 +96,7 @@ ISTACK *create_stack(int size)
  * @param ISTACK *p the address of the ISTACK data structure
  */
 
-void destroy_stack(ISTACK *p)
+void destroy_stack(IMGSTACK *p)
 {
     if ( p != NULL ) {
         free(p);
@@ -104,12 +109,12 @@ void destroy_stack(ISTACK *p)
  * @return non-zero if the stack is full; zero otherwise
  */
 
-int is_full(ISTACK *p)
+int is_full(IMGSTACK *p)
 {
     if ( p == NULL ) {
         return 0;
     }
-    return ( p->pos == (p->size -1) );
+    return ( p->pos == (p->size*10000 - 10000) );
 }
 
 /**
@@ -118,12 +123,12 @@ int is_full(ISTACK *p)
  * @return non-zero if the stack is empty; zero otherwise
  */
 
-int is_empty(ISTACK *p)
+int is_empty(IMGSTACK *p)
 {
     if ( p == NULL ) {
         return 0;
     }
-    return ( p->pos == -1 );
+    return ( p->pos == -10000 );
 }
 
 /**
@@ -133,15 +138,17 @@ int is_empty(ISTACK *p)
  * @return 0 on success; non-zero otherwise
  */
 
-int push(ISTACK *p, RECV_BUF* image)
+int push(IMGSTACK *p, RECV_BUF* image)
 {
     if ( p == NULL ) {
         return -1;
     }
 
     if ( !is_full(p) ) {
-        ++(p->pos);
-        p->items[p->pos] = *image;
+        p->pos = p->pos + 10000;
+        p->imageSeqPos++;
+        memcpy(p->imageData + p->pos, image->buf, 10000);
+        p->imageSeq[p->imageSeqPos] = image->seq;
         return 0;
     } else {
         return -1;
@@ -157,24 +164,22 @@ int push(ISTACK *p, RECV_BUF* image)
  * @return 0 on success; non-zero otherwise
  */
 
-int pop(ISTACK *p, RECV_BUF* image)
-{
-    printf("Start popping\n");
-    
+int pop(IMGSTACK *p, RECV_BUF* image)
+{    
     if (p == NULL) {
         return -1;
     }
     
 
     if (!is_empty(p)) {
-        *image = p->items[p->pos];
-        (p->pos)--; // Assuming your stack is 0-based.
+        memcpy(image->buf, p->imageData + p->pos, 10000);
+        image->seq = p->imageSeq[p->imageSeqPos];
+
+        p->imageSeqPos--;
+        p->pos = p->pos - 10000; // Assuming your stack is 0-based.
         return 0;
     } else {
         return 1;
     }
-
-    printf("End popping\n");
-
 }
 
