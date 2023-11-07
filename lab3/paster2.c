@@ -187,7 +187,6 @@ int main(int argc, char* argv[]){
                 double sleepTime = arguments.numMilliseconds*0.001; // Sleep for 0.5 seconds
                 unsigned int microseconds = (unsigned int)(sleepTime * 1000000); // Convert to microseconds
                 usleep(microseconds); // Sleep for the specified duration in microseconds
-                printf("Slept for %.2f seconds.\n", sleepTime);
 
                 // decompress image and store it in final shared memory location
                 sem_wait(&pstack->pushImage_sem);
