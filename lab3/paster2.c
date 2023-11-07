@@ -324,12 +324,21 @@ void processInput(int argc, char *argv[], args* destination){
         printf("Missing commands.");
         exit(1);
     }
+    int bufferSize = strtoul(argv[1], NULL, 10);
+    int numProducers = strtoul(argv[2], NULL, 10);
+    int numConsumers = strtoul(argv[3], NULL, 10);
+    int numMiliseconds = strtoul(argv[4], NULL, 10);
+    int imageToFetch = strtoul(argv[5], NULL, 10);
+    if (bufferSize <= 0 || numProducers <= 0 || numConsumers <= 0 || numMiliseconds < 0 || (imageToFetch < 1 || imageToFetch > 3)){
+        printf("Bad parameter\n");
+        exit(0);
+    }
 
-    destination->bufferSize = strtoul(argv[1], NULL, 10);
-    destination->numProducers = strtoul(argv[2], NULL, 10);
-    destination->numConsumers = strtoul(argv[3], NULL, 10);
-    destination->numMilliseconds = strtoul(argv[4], NULL, 10);
-    destination->imageToFetch = strtoul(argv[5], NULL, 10);
+    destination->bufferSize = bufferSize;
+    destination->numProducers = numProducers;
+    destination->numConsumers = numConsumers;
+    destination->numMilliseconds = numMiliseconds;
+    destination->imageToFetch = imageToFetch;
 }
 
 void recv_buf_init(RECV_BUF *ptr)
