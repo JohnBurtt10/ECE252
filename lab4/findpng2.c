@@ -113,6 +113,7 @@ void* threadFunction(void* args){
         // sleep until signaled
         if (is_empty(&shared_thread_variables.frontier)) { 
             pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
+            if (consumed > argument.pngcount || allPNGSFound)
         }
         char* url = pop_front(&shared_thread_variables.frontier);
         CURL* curl_handle = easy_handle_init(recv_buf, url);
