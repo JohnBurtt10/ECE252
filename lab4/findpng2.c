@@ -109,11 +109,19 @@ void* threadFunction(void* args){
     RECV_BUF* recv_buf;
     recv_buf_init(recv_buf, BUF_SIZE);
     while (1) {
+        // If n-1 threads are sleeping, set a global flag "done" and terminate everything.
+        if (n-1 threads are sleeping){
+            set global bool to true
+            broad_cast_all on cond variable
+            terminate current thread
+        }
         pthread_mutex_lock(&shared_thread_variables.cond_lock); 
         // sleep until signaled
         if (is_empty(&shared_thread_variables.frontier)) { 
             pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
             if (consumed > argument.pngcount || allPNGSFound)
+
+            // If global bool "done" true, terminate thread.
         }
         char* url = pop_front(&shared_thread_variables.frontier);
         CURL* curl_handle = easy_handle_init(recv_buf, url);
