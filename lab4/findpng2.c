@@ -175,8 +175,9 @@ void* threadFunction(void* args){
         push_back(&shared_thread_variables.visted_urls, popped_url);
 
         if (res == CURLE_OK){
-            printf("%lu bytes received in memory %p, seq=%d.\n", \
+            /* printf("%lu bytes received in memory %p, seq=%d.\n", \
                 recv_buf.size, recv_buf.buf, recv_buf.seq);
+            */
 
             process_data(curl_handle, &recv_buf);
         } else {
@@ -185,13 +186,17 @@ void* threadFunction(void* args){
 
         free(recv_buf.buf);
         
-        // if (counter == 2){
-        //     break;
-        // }
-        // counter++;
+        if (counter == 50){
+            break;
+        }
+        counter++;
     }
 
     print_queue(&shared_thread_variables.frontier);
+
+    puts("PNG Urls: D");
+    print_queue(&shared_thread_variables.png_urls);
+
     
     curl_easy_cleanup(curl_handle);
     return NULL;
@@ -491,13 +496,14 @@ int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf)
 
 int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
 {
-    char fname[256];
     char *eurl = NULL;          /* effective URL */
     curl_easy_getinfo(curl_handle, CURLINFO_EFFECTIVE_URL, &eurl);
     if ( eurl != NULL) {
-        printf("The PNG url is: %s\n", eurl);
-    }
-    printf("%s", fname);
+        char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) eurl) + 1);
+        memcpy(urlToSave, eurl, strlen((char*) eurl) + 1);
+        printf("The PNG url is: %s\n", urlToSave);
+        push_back(&shared_thread_variables.png_urls, urlToSave);
+    }    
     return 0;
 }
 
