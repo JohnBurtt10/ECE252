@@ -20,9 +20,12 @@ void push_back(QUEUE* stack, char* url){
 void clean_queue(QUEUE* stack){
     NODE* currNode = stack->head;
     NODE* temp;
-    for (int i = 0; i < stack->queueSize; ++i){
+    while(currNode != NULL){
         temp = currNode;
         currNode = currNode->next;
+        if (temp->buffer != NULL){
+            free(temp->buffer);
+        }
         free(temp);
     }
 }

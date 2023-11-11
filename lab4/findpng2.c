@@ -110,6 +110,8 @@ int main(int argc, char* argv[]){
     }
 
     hdestroy();
+    clean_queue(&shared_thread_variables.frontier);
+    free(p_tids);
     curl_global_cleanup();
     return 0;
 }
@@ -144,12 +146,12 @@ int main(int argc, char* argv[]){
 // }
 
 void* threadFunction(void* args){
-    RECV_BUF* recv_buf;
-    CURL* curl_handle = easy_handle_init(recv_buf, arguments.startingURL);
+    RECV_BUF recv_buf;
+    CURL* curl_handle = easy_handle_init(&recv_buf, pop_front(&shared_thread_variables.frontier));
     CURLcode res;
 
     if ( curl_handle == NULL ) {
-        fprintf(stderr, "Curl initialization failed. Exiting...\n");
+        printf("Curl initialization failed. Exiting...\n");
         curl_global_cleanup();
         abort();
     }
@@ -158,9 +160,9 @@ void* threadFunction(void* args){
 
     if (res == CURLE_OK){
         printf("%lu bytes received in memory %p, seq=%d.\n", \
-            recv_buf->size, recv_buf->buf, recv_buf->seq);
+            recv_buf.size, recv_buf.buf, recv_buf.seq);
 
-        process_data(curl_handle, recv_buf);
+        process_data(curl_handle, &recv_buf);
     } else {
         fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     }
@@ -168,7 +170,7 @@ void* threadFunction(void* args){
     print_queue(&shared_thread_variables.frontier);
     
     curl_easy_cleanup(curl_handle);
-    free(recv_buf->buf);
+    free(recv_buf.buf);
     return NULL;
 }
 
