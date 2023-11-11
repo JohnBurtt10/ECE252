@@ -54,6 +54,7 @@ typedef struct _sharedVariables{
     ENTRY e, *ep;   // Hash table of every site seen. Keeps track of visited or not visited
     QUEUE frontier; // To-visit urls
     QUEUE png_urls; // URLS that are pngs.
+    QUEUE visted_urls; // A queue used to store all URLS for deallocation.
     pthread_cond_t cond_variable;
     pthread_mutex_t queue_lock;
     pthread_mutex_t hash_lock;
@@ -85,6 +86,7 @@ int recv_buf_init(RECV_BUF *ptr, size_t max_size); // Provided
 int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
 int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
 int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
+void insertHashTableEntry(char *entry);
 xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath); // Provided
 htmlDocPtr mem_getdoc(char *buf, int size, const char *url); // Provided
 
@@ -109,8 +111,9 @@ int main(int argc, char* argv[]){
         pthread_join(p_tids[i], NULL);
     }
 
-    hdestroy();
     clean_queue(&shared_thread_variables.frontier);
+    clean_queue(&shared_thread_variables.visted_urls);
+    hdestroy();
     free(p_tids);
     curl_global_cleanup();
     return 0;
@@ -147,30 +150,50 @@ int main(int argc, char* argv[]){
 
 void* threadFunction(void* args){
     RECV_BUF recv_buf;
-    CURL* curl_handle = easy_handle_init(&recv_buf, pop_front(&shared_thread_variables.frontier));
+    CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
     CURLcode res;
 
-    if ( curl_handle == NULL ) {
-        printf("Curl initialization failed. Exiting...\n");
-        curl_global_cleanup();
-        abort();
-    }
+    int counter = 0;
+    while (!is_empty(&shared_thread_variables.frontier)){
+        if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
+            return NULL;
+        }   
 
-    res = curl_easy_perform(curl_handle);
+        if ( curl_handle == NULL ) {
+            printf("Curl initialization failed. Exiting...\n");
+            curl_global_cleanup();
+            abort();
+        }
 
-    if (res == CURLE_OK){
-        printf("%lu bytes received in memory %p, seq=%d.\n", \
-            recv_buf.size, recv_buf.buf, recv_buf.seq);
+        // Pop from queue and update curl URL
+        char* popped_url = pop_front(&shared_thread_variables.frontier);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
+        res = curl_easy_perform(curl_handle);
 
-        process_data(curl_handle, &recv_buf);
-    } else {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        // Add to hash table to keep track of visited URLS
+        insertHashTableEntry(popped_url);
+        push_back(&shared_thread_variables.visted_urls, popped_url);
+
+        if (res == CURLE_OK){
+            printf("%lu bytes received in memory %p, seq=%d.\n", \
+                recv_buf.size, recv_buf.buf, recv_buf.seq);
+
+            process_data(curl_handle, &recv_buf);
+        } else {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        }
+
+        free(recv_buf.buf);
+        
+        // if (counter == 2){
+        //     break;
+        // }
+        // counter++;
     }
 
     print_queue(&shared_thread_variables.frontier);
     
     curl_easy_cleanup(curl_handle);
-    free(recv_buf.buf);
     return NULL;
 }
 
@@ -183,10 +206,6 @@ CURL *easy_handle_init(RECV_BUF *ptr, const char *url)
         return NULL;
     }
 
-    /* init user defined call back function buffer */
-    if ( recv_buf_init(ptr, BUF_SIZE) != 0 ) {
-        return NULL;
-    }
     /* init a curl session */
     curl_handle = curl_easy_init();
 
@@ -294,8 +313,16 @@ void initThreadStuff(){
         puts("Failed to initalize hash table. Exiting...");
         exit(1);
     }
+
+    // Since pushing to queue, we cannot "free()" the passed in arg'd, so we must copy its content to a malloc'd variable
+    // so the queue can properly free everything.
+    char* temp = arguments.startingURL;
+    arguments.startingURL = malloc(sizeof(char) * strlen(temp) + 1);
+    memcpy(arguments.startingURL, temp, strlen(temp) + 1);
+
     init_queue(&shared_thread_variables.frontier);
     init_queue(&shared_thread_variables.png_urls);
+    init_queue(&shared_thread_variables.visted_urls);
     push_back(&shared_thread_variables.frontier, arguments.startingURL);
     pthread_cond_init(&shared_thread_variables.cond_variable, NULL);
 
@@ -434,15 +461,14 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
                 char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href) + 1);
                 memcpy(urlToSave, href, strlen((char*) href) + 1);
-                // shared_thread_variables.e.key = urlToSave;
-                // shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
-                // if (shared_thread_variables.ep == NULL){ // Does not exist, so push it.
-                //     shared_thread_variables.e.data = (void*) 0;
-                //     hsearch(shared_thread_variables.e, ENTER);
-                // }
-
-                push_back(&shared_thread_variables.frontier, urlToSave);
-                printf("href: %s\n", urlToSave);
+                shared_thread_variables.e.key = urlToSave;
+                shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
+                if (shared_thread_variables.ep == NULL){ // Does not exist, so push URL to frontier
+                    push_back(&shared_thread_variables.frontier, urlToSave);
+                    printf("href: %s\n", urlToSave);
+                } else {
+                    free(urlToSave);
+                }
             }
             xmlFree(href);
         }
