@@ -432,8 +432,8 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 xmlFree(old);
             }
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
-                char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href));
-                memcpy(urlToSave, href, strlen((char*) href));
+                char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href) + 1);
+                memcpy(urlToSave, href, strlen((char*) href) + 1);
                 // shared_thread_variables.e.key = urlToSave;
                 // shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
                 // if (shared_thread_variables.ep == NULL){ // Does not exist, so push it.
@@ -471,8 +471,6 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
     if ( eurl != NULL) {
         printf("The PNG url is: %s\n", eurl);
     }
-
-    sprintf(fname, "./output_%d.png", p_recv_buf->seq);
     printf("%s", fname);
     return 0;
 }
