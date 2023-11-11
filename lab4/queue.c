@@ -4,7 +4,7 @@
 
 void init_queue(QUEUE* stack){
     stack->head = NULL;
-    stack->stackSize = 0;
+    stack->queueSize = 0;
 }
 
 void push_back(QUEUE* stack, char* url){
@@ -14,13 +14,13 @@ void push_back(QUEUE* stack, char* url){
     NODE* temp = stack->head;
     stack->head = newNode;
     stack->head->next = temp;
-    stack->stackSize++;
+    stack->queueSize++;
 }
 
 void clean_queue(QUEUE* stack){
     NODE* currNode = stack->head;
     NODE* temp;
-    for (int i = 0; i < stack->stackSize; ++i){
+    for (int i = 0; i < stack->queueSize; ++i){
         temp = currNode;
         currNode = currNode->next;
         free(temp);
@@ -29,7 +29,7 @@ void clean_queue(QUEUE* stack){
 
 // Returns buffer address. ENSURE TO STORE RETURNED BUFFER OR MEMORY LEAK!!
 char* pop_front(QUEUE* stack){
-    if (stack->stackSize == 0){
+    if (stack->queueSize == 0){
         puts("Nothing to Pop");
         return NULL;
     }
@@ -38,7 +38,7 @@ char* pop_front(QUEUE* stack){
     NODE* temp = stack->head;
     stack->head = stack->head->next;
 
-    stack->stackSize--;
+    stack->queueSize--;
 
     free(temp);
 
@@ -46,27 +46,39 @@ char* pop_front(QUEUE* stack){
 }
 
 int is_empty(QUEUE* queue){
-    return (queue->stackSize == 0);
+    return (queue->queueSize == 0);
+}
+
+void print_queue(QUEUE* queue){
+    NODE* p_currNode = queue->head;
+    int counter = 0;
+    while (p_currNode != NULL){
+        printf("Node: %d, value: %s\n", counter, p_currNode->buffer);
+        p_currNode = p_currNode->next;
+        counter++;
+    }
 }
 
 // int main(int argc, char* argv[]){
-//     QUEUE stack;
-//     initStack(&stack);
+//     QUEUE queue;
+//     init_queue(&queue);
 
 //     char* str = "HELLO WORLD";
 //     char* anotherString = "BREH";
 //     char* someotherString = "TEST";
-//     push(&stack, str);
-//     push(&stack, anotherString);
-//     push(&stack, someotherString);
+//     push_back(&queue, str);
+//     push_back(&queue, anotherString);
+//     push_back(&queue, someotherString);
 
-//     char* url = popFront(&stack);
+//     print_queue(&queue);
+
+//     char* url = pop_front(&queue);
 //     printf("%s\n", url);
 
-//     url = popFront(&stack);
+//     url = pop_front(&queue);
 //     printf("%s\n", url);
 
-//     clean_queue(&stack);
+//     clean_queue(&queue);
 
 //     return 0;
 // }

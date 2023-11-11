@@ -91,6 +91,8 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url); // Provided
 int main(int argc, char* argv[]){
     processInput(&arguments, argv, argc);
 
+    printf("numThreads: %d, numUniquePngs: %d, logFile: %s, startingURL: %s\n", arguments.numThreads, arguments.numUniqueURLs, arguments.logFile, arguments.startingURL);
+
     p_tids = malloc(sizeof(pthread_t) * arguments.numThreads);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -106,8 +108,6 @@ int main(int argc, char* argv[]){
     for (int i = 0; i < arguments.numThreads; ++i){
         pthread_join(p_tids[i], NULL);
     }
-
-    printf("numThreads: %d, numUniquePngs: %d, logFile: %s, startingURL: %s\n", arguments.numThreads, arguments.numUniqueURLs, arguments.logFile, arguments.startingURL);
 
     hdestroy();
     curl_global_cleanup();
@@ -157,8 +157,15 @@ void* threadFunction(void* args){
     res = curl_easy_perform(curl_handle);
 
     if (res == CURLE_OK){
+        printf("%lu bytes received in memory %p, seq=%d.\n", \
+            recv_buf->size, recv_buf->buf, recv_buf->seq);
 
+        process_data(curl_handle, recv_buf);
+    } else {
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     }
+
+    print_queue(&shared_thread_variables.frontier);
     
     curl_easy_cleanup(curl_handle);
     free(recv_buf->buf);
@@ -210,14 +217,6 @@ CURL *easy_handle_init(RECV_BUF *ptr, const char *url)
     curl_easy_setopt(curl_handle, CURLOPT_MAXREDIRS, 5L);
     /* supports all built-in encodings */ 
     curl_easy_setopt(curl_handle, CURLOPT_ACCEPT_ENCODING, "");
-
-    /* Max time in seconds that the connection phase to the server to take */
-    //curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 5L);
-    /* Max time in seconds that libcurl transfer operation is allowed to take */
-    //curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
-    /* Time out for Expect: 100-continue response in milliseconds */
-    //curl_easy_setopt(curl_handle, CURLOPT_EXPECT_100_TIMEOUT_MS, 0L);
-
     /* Enable the cookie engine without reading any initial cookies */
     curl_easy_setopt(curl_handle, CURLOPT_COOKIEFILE, "");
     /* allow whatever auth the proxy speaks */
@@ -288,7 +287,7 @@ int recv_buf_init(RECV_BUF *ptr, size_t max_size)
 }
 
 void initThreadStuff(){
-    int status = hcreate(arguments.numUniqueURLs);
+    int status = hcreate(1000);
     if (status == 0){
         puts("Failed to initalize hash table. Exiting...");
         exit(1);
@@ -374,16 +373,13 @@ int is_png(char* buf) {
 }
 
 /**
- * @brief process teh download data by curl
+ * @brief process teh download data by curl. Extracts content type (aka png, or html) from curl'd url and processes it based on it.
  * @param CURL *curl_handle is the curl handler
  * @param RECV_BUF p_recv_buf contains the received data. 
  * @return 0 on success; non-zero otherwise
  */
-
 int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
 {
-    char fname[256];
-    pid_t pid =getpid();
     long response_code;
 
     curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &response_code);
@@ -402,8 +398,6 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
         return process_html(curl_handle, p_recv_buf);
     } else if ( strstr(ct, CT_PNG) ) {
         return process_png(curl_handle, p_recv_buf);
-    } else {
-        sprintf(fname, "./output_%d", pid);
     }
 
     // Push url to png url queue.
@@ -436,7 +430,17 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 xmlFree(old);
             }
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
-                printf("href: %s\n", href);
+                char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href));
+                memcpy(urlToSave, href, strlen((char*) href));
+                // shared_thread_variables.e.key = urlToSave;
+                // shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
+                // if (shared_thread_variables.ep == NULL){ // Does not exist, so push it.
+                //     shared_thread_variables.e.data = (void*) 0;
+                //     hsearch(shared_thread_variables.e, ENTER);
+                // }
+
+                push_back(&shared_thread_variables.frontier, urlToSave);
+                printf("href: %s\n", urlToSave);
             }
             xmlFree(href);
         }
@@ -449,15 +453,11 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
 
 int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf)
 {
-    char fname[256];
     int follow_relative_link = 1;
     char *url = NULL; 
-    pid_t pid =getpid();
 
     curl_easy_getinfo(curl_handle, CURLINFO_EFFECTIVE_URL, &url);
     find_http(p_recv_buf->buf, p_recv_buf->size, follow_relative_link, url); 
-    sprintf(fname, "./output_%d.html", pid);
-    printf("%s", fname);
     return 0;
 }
 
