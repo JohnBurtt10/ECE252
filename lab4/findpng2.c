@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +56,7 @@ typedef struct _sharedVariables{
     QUEUE frontier; // To-visit urls
     QUEUE png_urls; // URLS that are pngs.
     QUEUE visted_urls; // A queue used to store all URLS for deallocation.
+    volatile int num_active_threads; // Keep tracking of number of threads actively crawling.
     pthread_cond_t cond_variable;
     pthread_mutex_t queue_lock;
     pthread_mutex_t hash_lock;
@@ -91,10 +93,10 @@ void cleanup();
 xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath); // Provided
 htmlDocPtr mem_getdoc(char *buf, int size, const char *url); // Provided
 
+struct hsearch_data htab;
+
 int main(int argc, char* argv[]){
     processInput(&arguments, argv, argc);
-
-    printf("numThreads: %d, numUniquePngs: %d, logFile: %s, startingURL: %s\n", arguments.numThreads, arguments.numUniqueURLs, arguments.logFile, arguments.startingURL);
 
     p_tids = malloc(sizeof(pthread_t) * arguments.numThreads);
 
@@ -111,6 +113,9 @@ int main(int argc, char* argv[]){
     for (int i = 0; i < arguments.numThreads; ++i){
         pthread_join(p_tids[i], NULL);
     }
+
+    puts("PNG Urls: ");
+    print_queue(&shared_thread_variables.png_urls);
 
     free(p_tids);
     cleanup();
@@ -146,35 +151,40 @@ int main(int argc, char* argv[]){
 //     return NULL;
 // }
 
+// First thread to enter should block all other threads till it pushes new urls to the frontier.
+// Once URLS are pushed, the thread doing the pushing should signal all other threads to awaken via pthread_cond
+// Upon awakening, each thread should first check if we have retrieved all required unique images. Then, it should
 void* threadFunction(void* args){
     RECV_BUF recv_buf;
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
     CURLcode res;
 
-    while (!is_empty(&shared_thread_variables.frontier)){
-
-        if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs){
-            break;
-        }
-
-        if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
-            return NULL;
-        }   
-
+    while (1){
         if ( curl_handle == NULL ) {
             printf("Curl initialization failed. Exiting...\n");
             curl_global_cleanup();
             abort();
         }
 
+        if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
+            return NULL;
+        }   
+
+        int queueSize = get_queueSize(&shared_thread_variables.png_urls);
+        if (queueSize == arguments.numUniqueURLs){
+            free(recv_buf.buf);
+            break;
+        }
+
         // Pop from queue and update curl URL
         char* popped_url = pop_front(&shared_thread_variables.frontier);
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
-        res = curl_easy_perform(curl_handle);
 
         // Add to hash table to keep track of visited URLS
         insertHashTableEntry(popped_url);
         push_back(&shared_thread_variables.visted_urls, popped_url);
+
+        res = curl_easy_perform(curl_handle);
 
         if (res == CURLE_OK){
             process_data(curl_handle, &recv_buf);
@@ -186,10 +196,6 @@ void* threadFunction(void* args){
     }
 
     print_queue(&shared_thread_variables.frontier);
-
-    puts("PNG Urls: ");
-    print_queue(&shared_thread_variables.png_urls);
-
     
     curl_easy_cleanup(curl_handle);
     return NULL;
@@ -306,11 +312,13 @@ int recv_buf_init(RECV_BUF *ptr, size_t max_size)
 }
 
 void initThreadStuff(){
-    int status = hcreate(1000);
+    int status = hcreate_r(1000, &htab);
     if (status == 0){
         puts("Failed to initalize hash table. Exiting...");
         exit(1);
     }
+
+    shared_thread_variables.num_active_threads = 0;
 
     // Since pushing to queue, we cannot "free()" the passed in arg'd, so we must copy its content to a malloc'd variable
     // so the queue can properly free everything.
@@ -341,10 +349,14 @@ void initThreadStuff(){
 }
 
 void insertHashTableEntry(char *entry) { 
+    if (entry == NULL){
+        printf("Invalid Data to push into hash table.");
+        return;
+    }
     // Inserting seed url as the first webpage (NOT VISITED YET).
     shared_thread_variables.e.key = entry;
     shared_thread_variables.e.data = (void *) 0;
-    shared_thread_variables.ep = hsearch(shared_thread_variables.e, ENTER);
+    hsearch_r(shared_thread_variables.e, ENTER, &shared_thread_variables.ep, &htab);
     if (shared_thread_variables.ep == NULL) { // Failed to insert for whatever reason.
         fprintf(stderr, "entry failed\n");
         exit(EXIT_FAILURE);
@@ -388,6 +400,9 @@ int processInput(ARGS* arguments, char* argv[], int argc){
 
 // Returns 1 if its a png, otherwise it will return 0.
 int is_png(char* buf) {
+    if (buf == NULL){
+        return 0;
+    }
     unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     if (memcmp(cmpHeader, buf, 8)){
         return 0;
@@ -456,8 +471,9 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
                 char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href) + 1);
                 memcpy(urlToSave, href, strlen((char*) href) + 1);
+
                 shared_thread_variables.e.key = urlToSave;
-                shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
+                hsearch_r(shared_thread_variables.e, FIND, &shared_thread_variables.ep, &htab);
                 if (shared_thread_variables.ep == NULL){ // Does not exist, so push URL to frontier
                     push_back(&shared_thread_variables.frontier, urlToSave);
                     // printf("href: %s\n", urlToSave);
@@ -544,7 +560,7 @@ void cleanup(){
     clean_queue(&shared_thread_variables.png_urls);
     clean_queue(&shared_thread_variables.visted_urls);
 
-    hdestroy();
+    hdestroy_r(&htab);
 
     curl_global_cleanup();
 
