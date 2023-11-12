@@ -2,23 +2,23 @@
 #include <stdlib.h>
 #include "queue.h"
 
-void init_queue(QUEUE* stack){
-    stack->head = NULL;
-    stack->queueSize = 0;
+void init_queue(QUEUE* queue){
+    queue->head = NULL;
+    queue->queueSize = 0;
 }
 
-void push_back(QUEUE* stack, char* url){
+void push_back(QUEUE* queue, char* url){
     NODE* newNode = malloc(sizeof(NODE));
     newNode->buffer = url;
 
-    NODE* temp = stack->head;
-    stack->head = newNode;
-    stack->head->next = temp;
-    stack->queueSize++;
+    NODE* temp = queue->head;
+    queue->head = newNode;
+    queue->head->next = temp;
+    queue->queueSize++;
 }
 
-void clean_queue(QUEUE* stack){
-    NODE* currNode = stack->head;
+void clean_queue(QUEUE* queue){
+    NODE* currNode = queue->head;
     NODE* temp;
     while(currNode != NULL){
         temp = currNode;
@@ -31,17 +31,17 @@ void clean_queue(QUEUE* stack){
 }
 
 // Returns buffer address. ENSURE TO STORE RETURNED BUFFER OR MEMORY LEAK!!
-char* pop_front(QUEUE* stack){
-    if (stack->queueSize == 0){
+char* pop_front(QUEUE* queue){
+    if (queue->queueSize == 0){
         puts("Nothing to Pop");
         return NULL;
     }
-    char* popped = stack->head->buffer;
+    char* popped = queue->head->buffer;
 
-    NODE* temp = stack->head;
-    stack->head = stack->head->next;
+    NODE* temp = queue->head;
+    queue->head = queue->head->next;
 
-    stack->queueSize--;
+    queue->queueSize--;
 
     free(temp);
 
@@ -60,6 +60,10 @@ void print_queue(QUEUE* queue){
         p_currNode = p_currNode->next;
         counter++;
     }
+}
+
+int get_queueSize(QUEUE* queue){
+    return queue->queueSize;
 }
 
 // int main(int argc, char* argv[]){

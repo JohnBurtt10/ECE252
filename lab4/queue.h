@@ -16,4 +16,5 @@ void push_back(QUEUE* queue, char* buffer);
 char* pop_front(QUEUE* queue);
 int is_empty(QUEUE* queue);
 void print_queue(QUEUE* queue);
-void clean_queue(QUEUE* stack);
+void clean_queue(QUEUE* queue);
+int get_queueSize(QUEUE* queue);

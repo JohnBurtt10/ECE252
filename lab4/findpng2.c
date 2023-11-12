@@ -87,6 +87,7 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
 int process_html(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
 int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf); // Provided
 void insertHashTableEntry(char *entry);
+void cleanup();
 xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath); // Provided
 htmlDocPtr mem_getdoc(char *buf, int size, const char *url); // Provided
 
@@ -111,11 +112,8 @@ int main(int argc, char* argv[]){
         pthread_join(p_tids[i], NULL);
     }
 
-    clean_queue(&shared_thread_variables.frontier);
-    clean_queue(&shared_thread_variables.visted_urls);
-    hdestroy();
     free(p_tids);
-    curl_global_cleanup();
+    cleanup();
     return 0;
 }
 
@@ -153,8 +151,12 @@ void* threadFunction(void* args){
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
     CURLcode res;
 
-    int counter = 0;
     while (!is_empty(&shared_thread_variables.frontier)){
+
+        if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs){
+            break;
+        }
+
         if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
             return NULL;
         }   
@@ -175,26 +177,17 @@ void* threadFunction(void* args){
         push_back(&shared_thread_variables.visted_urls, popped_url);
 
         if (res == CURLE_OK){
-            /* printf("%lu bytes received in memory %p, seq=%d.\n", \
-                recv_buf.size, recv_buf.buf, recv_buf.seq);
-            */
-
             process_data(curl_handle, &recv_buf);
         } else {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
 
         free(recv_buf.buf);
-        
-        if (counter == 50){
-            break;
-        }
-        counter++;
     }
 
     print_queue(&shared_thread_variables.frontier);
 
-    puts("PNG Urls: D");
+    puts("PNG Urls: ");
     print_queue(&shared_thread_variables.png_urls);
 
     
@@ -395,12 +388,9 @@ int processInput(ARGS* arguments, char* argv[], int argc){
 
 // Returns 1 if its a png, otherwise it will return 0.
 int is_png(char* buf) {
-    unsigned int cmpHeader[] = {137, 80, 78, 71, 13, 10, 26, 10};
-    for (int i = 0; i < 8; ++i){
-        unsigned int result = buf[i];
-        if (result != cmpHeader[i]){
-            return 0;
-        }
+    unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (memcmp(cmpHeader, buf, 8)){
+        return 0;
     }
 
     return 1;
@@ -470,7 +460,7 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 shared_thread_variables.ep = hsearch(shared_thread_variables.e, FIND);
                 if (shared_thread_variables.ep == NULL){ // Does not exist, so push URL to frontier
                     push_back(&shared_thread_variables.frontier, urlToSave);
-                    printf("href: %s\n", urlToSave);
+                    // printf("href: %s\n", urlToSave);
                 } else {
                     free(urlToSave);
                 }
@@ -499,6 +489,10 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
     char *eurl = NULL;          /* effective URL */
     curl_easy_getinfo(curl_handle, CURLINFO_EFFECTIVE_URL, &eurl);
     if ( eurl != NULL) {
+        // First verify if it is an actual image before pushing to queue.
+        if (!is_png(p_recv_buf->buf)){
+            return 0;
+        }
         char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) eurl) + 1);
         memcpy(urlToSave, eurl, strlen((char*) eurl) + 1);
         printf("The PNG url is: %s\n", urlToSave);
@@ -543,4 +537,18 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url)
         return NULL;
     }
     return doc;
+}
+
+void cleanup(){
+    clean_queue(&shared_thread_variables.frontier);
+    clean_queue(&shared_thread_variables.png_urls);
+    clean_queue(&shared_thread_variables.visted_urls);
+
+    hdestroy();
+
+    curl_global_cleanup();
+
+    pthread_mutex_destroy(&shared_thread_variables.cond_lock);
+    pthread_mutex_destroy(&shared_thread_variables.queue_lock);
+    pthread_mutex_destroy(&shared_thread_variables.hash_lock);
 }
