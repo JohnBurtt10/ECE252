@@ -12,6 +12,7 @@
 #include <libxml/xpath.h>
 #include <libxml/uri.h>
 #include "queue.h"
+#include <semaphore.h>
 
 /* 
 To insert into hashtable, use hsearch(ENTRY entry, ACTION action), where action = ENTER
@@ -56,11 +57,13 @@ typedef struct _sharedVariables{
     QUEUE frontier; // To-visit urls
     QUEUE png_urls; // URLS that are pngs.
     QUEUE visted_urls; // A queue used to store all URLS for deallocation.
-    volatile int num_active_threads; // Keep tracking of number of threads actively crawling.
+    volatile int num_active_threads; // Keep tracking of number of threads actively crawling. // WONT BE NEEDED
     pthread_cond_t cond_variable;
     pthread_mutex_t queue_lock;
     pthread_mutex_t hash_lock;
     pthread_mutex_t cond_lock;
+    int is_done;
+    sem_t num_awake_threads;
 } sharedVariables;
 
 // provided in starter code.
@@ -106,7 +109,7 @@ int main(int argc, char* argv[]){
     initThreadStuff();
     
     for (int i = 0; i < arguments.numThreads; ++i){
-        pthread_create(p_tids + i, NULL, &threadFunction, NULL);
+        pthread_create(p_tids + i, NULL, &threadFunction, (void*)&i);
     }
 
     // Join threads
@@ -114,8 +117,8 @@ int main(int argc, char* argv[]){
         pthread_join(p_tids[i], NULL);
     }
 
-    puts("PNG Urls: ");
-    print_queue(&shared_thread_variables.png_urls);
+    print_queue(&shared_thread_variables.png_urls, "png_urls.txt");
+    print_queue(&shared_thread_variables.visted_urls, arguments.logFile);
 
     free(p_tids);
     cleanup();
@@ -158,6 +161,10 @@ void* threadFunction(void* args){
     RECV_BUF recv_buf;
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
     CURLcode res;
+    char* popped_url;
+    pthread_t tid = pthread_self();
+    printf("Thread ID: %lu\n", tid);
+    int queueSize;
 
     while (1){
         if ( curl_handle == NULL ) {
@@ -170,15 +177,38 @@ void* threadFunction(void* args){
             return NULL;
         }   
 
-        int queueSize = get_queueSize(&shared_thread_variables.png_urls);
+        queueSize = get_queueSize(&shared_thread_variables.png_urls);
         if (queueSize == arguments.numUniqueURLs){
             free(recv_buf.buf);
             break;
         }
-
+        queueSize = get_queueSize(&shared_thread_variables.frontier);
+        // If n-1 threads are sleeping, set a global flag "done" and terminate everything.
+        if (queueSize == 0 && sem_trywait(&shared_thread_variables.num_awake_threads)){
+            printf("thread: %ld is broadcasting!!!!\n", tid);
+            shared_thread_variables.is_done = 1;
+            pthread_cond_broadcast(&shared_thread_variables.cond_variable);
+            break;
+        }
+        pthread_mutex_lock(&shared_thread_variables.cond_lock); 
+        // sleep until signaled
+        if (is_empty(&shared_thread_variables.frontier)) {
+            pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
+            // printf("thread: %ld recived signal!\n", tid);
+            queueSize = get_queueSize(&shared_thread_variables.png_urls);
+            if (queueSize == arguments.numUniqueURLs || shared_thread_variables.is_done) { 
+                free(recv_buf.buf);
+                printf("thread: %ld is finishing!\n", tid);
+                break;
+            }
+        }  
+        pthread_mutex_unlock(&shared_thread_variables.cond_lock);
+        sem_post(&shared_thread_variables.num_awake_threads);
+        // printf("thread: %ld is here\n", tid);
         // Pop from queue and update curl URL
-        char* popped_url = pop_front(&shared_thread_variables.frontier);
+        popped_url = pop_front(&shared_thread_variables.frontier);
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
+        printf("thread: %ld is here with: %s\n", tid, popped_url);
 
         // Add to hash table to keep track of visited URLS
         insertHashTableEntry(popped_url);
@@ -188,6 +218,8 @@ void* threadFunction(void* args){
 
         if (res == CURLE_OK){
             process_data(curl_handle, &recv_buf);
+            pthread_cond_signal(&shared_thread_variables.cond_variable);
+            // printf("thread: %ld just signaled!\n", tid);
         } else {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
@@ -195,7 +227,7 @@ void* threadFunction(void* args){
         free(recv_buf.buf);
     }
 
-    print_queue(&shared_thread_variables.frontier);
+    // print_queue(&shared_thread_variables.frontier);
     
     curl_easy_cleanup(curl_handle);
     return NULL;
@@ -346,6 +378,8 @@ void initThreadStuff(){
         printf("\n cond_lock mutex init has failed\n");
         return;
     }
+    shared_thread_variables.is_done = 0;
+    sem_init(&shared_thread_variables.num_awake_threads, 1, arguments.numThreads-1);
 }
 
 void insertHashTableEntry(char *entry) { 
@@ -430,7 +464,7 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
     char *ct = NULL;
     curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_TYPE, &ct);
     if (ct != NULL ) {
-    	printf("Content-Type: %s, len=%ld\n", ct, strlen(ct));
+    	// printf("Content-Type: %s, len=%ld\n", ct, strlen(ct));
     }
 
     if ( strstr(ct, CT_HTML) ) {
@@ -511,7 +545,7 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
         }
         char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) eurl) + 1);
         memcpy(urlToSave, eurl, strlen((char*) eurl) + 1);
-        printf("The PNG url is: %s\n", urlToSave);
+        // printf("The PNG url is: %s\n", urlToSave);
         push_back(&shared_thread_variables.png_urls, urlToSave);
     }    
     return 0;
@@ -536,7 +570,7 @@ xmlXPathObjectPtr getnodeset (xmlDocPtr doc, xmlChar *xpath)
     }
     if(xmlXPathNodeSetIsEmpty(result->nodesetval)){
         xmlXPathFreeObject(result);
-        printf("No result\n");
+        // printf("No result\n");
         return NULL;
     }
     return result;

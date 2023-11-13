@@ -52,14 +52,24 @@ int is_empty(QUEUE* queue){
     return (queue->queueSize == 0);
 }
 
-void print_queue(QUEUE* queue){
+void print_queue(QUEUE* queue, const char *filename){
+ FILE* file = fopen(filename, "w");
+
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
     NODE* p_currNode = queue->head;
     int counter = 0;
-    while (p_currNode != NULL){
-        printf("Node: %d, value: %s\n", counter, p_currNode->buffer);
+
+    while (p_currNode != NULL) {
+        fprintf(file, "Node: %d, value: %s\n", counter, p_currNode->buffer);
         p_currNode = p_currNode->next;
         counter++;
     }
+
+    fclose(file);
 }
 
 int get_queueSize(QUEUE* queue){
