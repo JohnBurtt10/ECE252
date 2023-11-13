@@ -21,11 +21,11 @@ LDLIBS = -pthread $(LDLIBS_XML2) $(LDLIBS_CURL)
 
 SRCS   = findpng2.c queue.c
 OBJS3  = findpng2.o queue.o
-TARGETS= findpng2.out
+TARGETS= findpng2
 
 all: ${TARGETS}
 
-findpng2.out: $(OBJS3) 
+findpng2: $(OBJS3) 
 	$(LD) -o $@ $^ $(LDLIBS) $(LDFLAGS) 
 
 -include $(SRCS:.c=.d)

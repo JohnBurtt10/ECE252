@@ -106,6 +106,15 @@ int main(int argc, char* argv[]){
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
+    double times[2];
+    struct timeval tv;
+
+    if (gettimeofday(&tv, NULL) != 0) {
+        perror("gettimeofday");
+        abort();
+    }
+    times[0] = (tv.tv_sec) + tv.tv_usec/1000000.;
+
     // Initalize shared thread variables.
     initThreadStuff();
     
@@ -121,6 +130,13 @@ int main(int argc, char* argv[]){
     print_queue(&shared_thread_variables.png_urls, "png_urls.txt");
     print_queue(&shared_thread_variables.visted_urls, arguments.logFile);
 
+     if (gettimeofday(&tv, NULL) != 0) {
+            perror("gettimeofday");
+            abort();
+    }
+    times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
+    printf("findpng2 execution time: %.6lf seconds\n",  times[1] - times[0]);
+
     free(p_tids);
     cleanup();
     return 0;
@@ -135,7 +151,7 @@ void* threadFunction(void* args){
     CURLcode res;
     char* popped_url;
     pthread_t tid = pthread_self();
-    printf("Thread ID: %lu\n", tid);
+    // printf("Thread ID: %lu\n", tid);
     unsigned int png_urls_queue_size;
     unsigned int frontier_queue_size;
 
@@ -152,7 +168,7 @@ void* threadFunction(void* args){
         // *** This shouldn't be required ***
         if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
-            printf("thread: %ld is exiting.\n", tid);
+            // printf("thread: %ld is exiting.\n", tid);
             pthread_exit(NULL);
         }
         png_urls_queue_size = get_queueSize(&shared_thread_variables.png_urls);
@@ -160,7 +176,7 @@ void* threadFunction(void* args){
 
         // If every thread other than the current one is asleep or the number of unqiue PNG URLs found is equal to the max specified by the user
         if ((sem_trywait(&shared_thread_variables.num_awake_threads) && (frontier_queue_size == 0)) || (png_urls_queue_size == arguments.numUniqueURLs)){
-            printf("thread: %ld is broadcasting.\n", tid);
+            // printf("thread: %ld is broadcasting.\n", tid);
             free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
@@ -180,7 +196,7 @@ void* threadFunction(void* args){
         if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
             pthread_mutex_unlock(&shared_thread_variables.cond_lock);
-            printf("thread: %ld is finishing!\n", tid);
+            // printf("thread: %ld is finishing!\n", tid);
             pthread_exit(NULL);
         }
 
@@ -596,7 +612,7 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url)
     htmlDocPtr doc = htmlReadMemory(buf, size, url, NULL, opts);
     
     if ( doc == NULL ) {
-        fprintf(stderr, "Document not parsed successfully.\n");
+        // fprintf(stderr, "Document not parsed successfully.\n");
         return NULL;
     }
     return doc;
