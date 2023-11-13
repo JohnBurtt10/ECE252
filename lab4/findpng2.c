@@ -62,6 +62,7 @@ typedef struct _sharedVariables{
     pthread_mutex_t queue_lock;
     pthread_mutex_t hash_lock;
     pthread_mutex_t cond_lock;
+    pthread_mutex_t process_data_lock;
     int is_done;
     sem_t num_awake_threads;
 } sharedVariables;
@@ -185,7 +186,8 @@ void* threadFunction(void* args){
         queueSize = get_queueSize(&shared_thread_variables.frontier);
         // If n-1 threads are sleeping, set a global flag "done" and terminate everything.
         if (queueSize == 0 && sem_trywait(&shared_thread_variables.num_awake_threads)){
-            printf("thread: %ld is broadcasting!!!!\n", tid);
+            // printf("thread: %ld is broadcasting!!!!\n", tid);
+            free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
             break;
@@ -194,7 +196,7 @@ void* threadFunction(void* args){
         // sleep until signaled
         if (is_empty(&shared_thread_variables.frontier)) {
             pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
-            // printf("thread: %ld recived signal!\n", tid);
+            printf("thread: %ld recived signal!\n", tid);
             queueSize = get_queueSize(&shared_thread_variables.png_urls);
             if (queueSize == arguments.numUniqueURLs || shared_thread_variables.is_done) { 
                 free(recv_buf.buf);
@@ -204,9 +206,13 @@ void* threadFunction(void* args){
         }  
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
         sem_post(&shared_thread_variables.num_awake_threads);
-        // printf("thread: %ld is here\n", tid);
+        printf("thread: %ld is here\n", tid);
         // Pop from queue and update curl URL
         popped_url = pop_front(&shared_thread_variables.frontier);
+        if (popped_url == NULL){
+            free(recv_buf.buf);
+            break;
+        }
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
         printf("thread: %ld is here with: %s\n", tid, popped_url);
 
@@ -217,9 +223,12 @@ void* threadFunction(void* args){
         res = curl_easy_perform(curl_handle);
 
         if (res == CURLE_OK){
+            pthread_mutex_lock(&shared_thread_variables.process_data_lock);
             process_data(curl_handle, &recv_buf);
+            pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
+
             pthread_cond_signal(&shared_thread_variables.cond_variable);
-            // printf("thread: %ld just signaled!\n", tid);
+            printf("thread: %ld just signaled!\n", tid);
         } else {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
@@ -366,18 +375,24 @@ void initThreadStuff(){
 
     if (pthread_mutex_init(&shared_thread_variables.hash_lock, NULL) != 0) {
         printf("\n hash_lock mutex init has failed\n");
-        return;
+        exit(0);
     }
 
     if (pthread_mutex_init(&shared_thread_variables.queue_lock, NULL) != 0) {
         printf("\n queue_lock mutex init has failed\n");
-        return;
+        exit(0);
     }
 
     if (pthread_mutex_init(&shared_thread_variables.cond_lock, NULL) != 0) {
         printf("\n cond_lock mutex init has failed\n");
-        return;
+        exit(0);
     }
+
+    if (pthread_mutex_init(&shared_thread_variables.process_data_lock, NULL) != 0) {
+        printf("\n process_data_lock mutex init has failed\n");
+        exit(0);
+    }
+
     shared_thread_variables.is_done = 0;
     sem_init(&shared_thread_variables.num_awake_threads, 1, arguments.numThreads-1);
 }
@@ -601,4 +616,5 @@ void cleanup(){
     pthread_mutex_destroy(&shared_thread_variables.cond_lock);
     pthread_mutex_destroy(&shared_thread_variables.queue_lock);
     pthread_mutex_destroy(&shared_thread_variables.hash_lock);
+    pthread_mutex_destroy(&shared_thread_variables.process_data_lock);
 }

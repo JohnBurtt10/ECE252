@@ -64,7 +64,7 @@ void print_queue(QUEUE* queue, const char *filename){
     int counter = 0;
 
     while (p_currNode != NULL) {
-        fprintf(file, "Node: %d, value: %s\n", counter, p_currNode->buffer);
+        fprintf(file, "%s\n", p_currNode->buffer);
         p_currNode = p_currNode->next;
         counter++;
     }
