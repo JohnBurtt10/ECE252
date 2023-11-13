@@ -167,6 +167,7 @@ void* threadFunction(void* args){
             pthread_exit(NULL);
         }
 
+        pthread_mutex_lock(&shared_thread_variables.process_data_lock);
         // thread 1 layout for standard pthread_cond_wait/pthread_cond_signal pattern
         // pthread_mutex_lock(&mutex);
         // while (!condition)
@@ -209,6 +210,7 @@ void* threadFunction(void* args){
         insertHashTableEntry(popped_url);
         push_back(&shared_thread_variables.visted_urls, popped_url);
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
+        pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
         sem_post(&shared_thread_variables.num_awake_threads);
        
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
