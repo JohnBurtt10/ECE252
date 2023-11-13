@@ -187,7 +187,7 @@ void* threadFunction(void* args){
         // new item in the frontier queue to process
         if (is_empty(&shared_thread_variables.frontier)) {
              // sleep until signaled
-            pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.other_lock);
+            pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
 
             // Check if while the current thread was asleep if any or all of the conditions to end the program were satifisied
             if (shared_thread_variables.is_done) { 
@@ -517,11 +517,11 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                     // /* do something that might make condition true */
                     // pthread_cond_signal(&cond);
                     // pthread_mutex_unlock(&mutex);
-                    pthread_mutex_lock(&shared_thread_variables.process_data_lock);
+                    pthread_mutex_lock(&shared_thread_variables.cond_lock);
                     push_back(&shared_thread_variables.frontier, urlToSave);
                     // Signal that there is a new item in the frontier queue to process
                     pthread_cond_signal(&shared_thread_variables.cond_variable);
-                    pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
+                    pthread_mutex_unlock(&shared_thread_variables.cond_lock);
                 } else {
                     free(urlToSave);
                 }
