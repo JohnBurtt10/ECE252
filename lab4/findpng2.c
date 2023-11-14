@@ -63,6 +63,7 @@ typedef struct _sharedVariables{
     pthread_mutex_t hash_lock;
     pthread_mutex_t cond_lock;
     pthread_mutex_t process_data_lock;
+    pthread_mutex_t process_png_lock;
     int is_done;
     sem_t num_awake_threads;
 } sharedVariables;
@@ -141,7 +142,6 @@ int main(int argc, char* argv[]){
 
     free(p_tids);
     cleanup();
-    curl_global_cleanup();
     return 0;
 }
 
@@ -171,7 +171,6 @@ void decrement() {
 void* threadFunction(void* args){
     RECV_BUF recv_buf;
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
-    pthread_t tid = pthread_self();
     if ( curl_handle == NULL ) {
         printf("Curl initialization failed. Exiting...\n");
         curl_global_cleanup();
@@ -254,11 +253,14 @@ void* threadFunction(void* args){
         if (popped_url == NULL){
             free(recv_buf.buf);
             curl_easy_cleanup(curl_handle);
+            pthread_mutex_unlock(&shared_thread_variables.cond_lock);
+            pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
             pthread_exit(NULL);
         }
 
         // printf("Thread: %ld is here with %s\n", tid, popped_url);
         // Add to hash table to keep track of visited URLS
+        push_back(&shared_thread_variables.all_urls, popped_url);
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
         pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
        
@@ -268,8 +270,6 @@ void* threadFunction(void* args){
 
         if (res == CURLE_OK){
             process_data(curl_handle, &recv_buf);
-        } else {
-            // fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
 
         free(recv_buf.buf);
@@ -392,7 +392,7 @@ int recv_buf_init(RECV_BUF *ptr, size_t max_size)
 }
 
 void initThreadStuff(){
-    int status = hcreate_r(1000, &htab);
+    int status = hcreate_r(500, &htab);
     if (status == 0){
         puts("Failed to initalize hash table. Exiting...");
         exit(1);
@@ -410,6 +410,7 @@ void initThreadStuff(){
     init_queue(&shared_thread_variables.png_urls);
     init_queue(&shared_thread_variables.all_urls);
     push_back(&shared_thread_variables.frontier, arguments.startingURL);
+    insertHashTableEntry(arguments.startingURL);
     pthread_cond_init(&shared_thread_variables.cond_variable, NULL);
 
     if (pthread_mutex_init(&shared_thread_variables.hash_lock, NULL) != 0) {
@@ -429,6 +430,11 @@ void initThreadStuff(){
 
     if (pthread_mutex_init(&shared_thread_variables.process_data_lock, NULL) != 0) {
         printf("\n process_data_lock mutex init has failed\n");
+        exit(0);
+    }
+
+    if (pthread_mutex_init(&shared_thread_variables.process_png_lock, NULL) != 0) {
+        printf("\n process_png_lock mutex init has failed\n");
         exit(0);
     }
 
@@ -497,12 +503,6 @@ int is_png(char* buf) {
             return 0;
         }
     }
-
-    // unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    // if (memcmp(cmpHeader, buf, 8)){
-    //     return 0;
-    // }
-
     return 1;
 }
 
@@ -540,7 +540,6 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
 
 int find_http(char *buf, int size, int follow_relative_links, const char *base_url)
 {
-
     int i;
     htmlDocPtr doc;
     xmlChar *xpath = (xmlChar*) "//a/@href";
@@ -564,9 +563,10 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 xmlFree(old);
             }
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
-                char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href) + 1);
-                memcpy(urlToSave, href, strlen((char*) href) + 1);
+                char* urlToSave = malloc(sizeof(char) * 256);
+                strncpy(urlToSave, (char*) href, 256);
 
+                pthread_mutex_lock(&shared_thread_variables.cond_lock);
                 shared_thread_variables.e.key = urlToSave;
                 hsearch_r(shared_thread_variables.e, FIND, &shared_thread_variables.ep, &htab);
                 if (shared_thread_variables.ep == NULL){ // Does not exist, so push URL to frontier
@@ -575,23 +575,20 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                     // /* do something that might make condition true */
                     // pthread_cond_signal(&cond);
                     // pthread_mutex_unlock(&mutex);
-                    pthread_mutex_lock(&shared_thread_variables.cond_lock);
                     insertHashTableEntry(urlToSave);
                     push_back(&shared_thread_variables.frontier, urlToSave);
-                    push_back(&shared_thread_variables.all_urls, urlToSave);
                     // Signal that there is a new item in the frontier queue to process
                     pthread_cond_signal(&shared_thread_variables.cond_variable);
-                    pthread_mutex_unlock(&shared_thread_variables.cond_lock);
                 } else {
                     free(urlToSave);
                 }
+                pthread_mutex_unlock(&shared_thread_variables.cond_lock);
             }
             xmlFree(href);
         }
         xmlXPathFreeObject (result);
     }
     xmlFreeDoc(doc);
-    xmlCleanupParser();
     return 0;
 }
 
@@ -614,11 +611,18 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
         if (!is_png(p_recv_buf->buf)){
             return 0;
         }
-        char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) eurl) + 1);
-        memcpy(urlToSave, eurl, strlen((char*) eurl) + 1);
+        char* urlToSave = malloc(sizeof(char) * 256);
+        strncpy(urlToSave, eurl, 256);
+
         // printf("The PNG url is: %s\n", urlToSave);
+        pthread_mutex_lock(&shared_thread_variables.process_png_lock);
+        if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs){
+            free(urlToSave);
+            pthread_mutex_unlock(&shared_thread_variables.process_png_lock);
+            return 0;
+        }
         push_back(&shared_thread_variables.png_urls, urlToSave);
-        push_back(&shared_thread_variables.all_urls, urlToSave);
+        pthread_mutex_unlock(&shared_thread_variables.process_png_lock);
     }    
     return 0;
 }
@@ -662,19 +666,8 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url)
 }
 
 void cleanup(){
-    // clean_queue(&shared_thread_variables.frontier);
-    // clean_queue(&shared_thread_variables.png_urls);
-    NODE* currNode = shared_thread_variables.all_urls.head;
-    NODE* temp;
-    while(currNode != NULL){
-        temp = currNode;
-        currNode = currNode->next;
-        if (temp->buffer != NULL){
-            free(temp->buffer);
-        }
-    }
-
-    free(arguments.startingURL);
+    xmlCleanupParser();
+    curl_global_cleanup();
 
     clean_queue(&shared_thread_variables.frontier);
     clean_queue(&shared_thread_variables.png_urls);
@@ -686,6 +679,7 @@ void cleanup(){
     pthread_mutex_destroy(&shared_thread_variables.queue_lock);
     pthread_mutex_destroy(&shared_thread_variables.hash_lock);
     pthread_mutex_destroy(&shared_thread_variables.process_data_lock);
+    pthread_mutex_destroy(&shared_thread_variables.process_png_lock);
 
     sem_destroy(&shared_thread_variables.num_awake_threads);
 }
