@@ -176,7 +176,7 @@ void* threadFunction(void* args){
 
         // If every thread other than the current one is asleep or the number of unqiue PNG URLs found is equal to the max specified by the user
         if ((sem_trywait(&shared_thread_variables.num_awake_threads) && (frontier_queue_size == 0)) || (png_urls_queue_size == arguments.numUniqueURLs)){
-            // printf("thread: %ld is broadcasting.\n", tid);
+            printf("thread: %ld is broadcasting.\n", tid);
             free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
@@ -196,7 +196,8 @@ void* threadFunction(void* args){
         if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
             pthread_mutex_unlock(&shared_thread_variables.cond_lock);
-            // printf("thread: %ld is finishing!\n", tid);
+            pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
+            printf("thread: %ld is finishing!\n", tid);
             pthread_exit(NULL);
         }
 
@@ -210,6 +211,7 @@ void* threadFunction(void* args){
             if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
             pthread_mutex_unlock(&shared_thread_variables.cond_lock);
+            pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
             pthread_exit(NULL);
             }
 
@@ -222,6 +224,8 @@ void* threadFunction(void* args){
             free(recv_buf.buf);
             pthread_exit(NULL);
         }
+
+        printf("Thread: %ld is here with %s\n", tid, popped_url);
         // Add to hash table to keep track of visited URLS
         insertHashTableEntry(popped_url);
         push_back(&shared_thread_variables.visted_urls, popped_url);
@@ -460,7 +464,7 @@ int is_png(char* buf) {
     }
     unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     if (memcmp(cmpHeader, buf, 8)){
-        return 0;
+            return 0;
     }
 
     return 1;
