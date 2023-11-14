@@ -23,9 +23,6 @@ void clean_queue(QUEUE* queue){
     while(currNode != NULL){
         temp = currNode;
         currNode = currNode->next;
-        if (temp->buffer != NULL){
-            free(temp->buffer);
-        }
         free(temp);
     }
 }

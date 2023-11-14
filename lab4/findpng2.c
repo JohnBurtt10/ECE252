@@ -56,7 +56,7 @@ typedef struct _sharedVariables{
     ENTRY e, *ep;   // Hash table of every site seen. Keeps track of visited or not visited
     QUEUE frontier; // To-visit urls
     QUEUE png_urls; // URLS that are pngs.
-    QUEUE visted_urls; // A queue used to store all URLS for deallocation.
+    QUEUE all_urls; // A queue used to store all URLS for deallocation.
     volatile int num_active_threads; // Keep tracking of number of threads actively crawling. // WONT BE NEEDED
     pthread_cond_t cond_variable;
     pthread_mutex_t queue_lock;
@@ -128,17 +128,20 @@ int main(int argc, char* argv[]){
     }
 
     print_queue(&shared_thread_variables.png_urls, "png_urls.txt");
-    print_queue(&shared_thread_variables.visted_urls, arguments.logFile);
+    if (arguments.logFile != NULL){
+        print_queue(&shared_thread_variables.all_urls, arguments.logFile);
+    }
 
-     if (gettimeofday(&tv, NULL) != 0) {
-            perror("gettimeofday");
-            abort();
+    if (gettimeofday(&tv, NULL) != 0) {
+        perror("gettimeofday");
+        abort();
     }
     times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
     printf("findpng2 execution time: %.6lf seconds\n",  times[1] - times[0]);
 
     free(p_tids);
     cleanup();
+    curl_global_cleanup();
     return 0;
 }
 
@@ -148,27 +151,26 @@ int main(int argc, char* argv[]){
 void* threadFunction(void* args){
     RECV_BUF recv_buf;
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
+    if ( curl_handle == NULL ) {
+        printf("Curl initialization failed. Exiting...\n");
+        curl_global_cleanup();
+        abort();
+    }
+
     CURLcode res;
     char* popped_url;
-    pthread_t tid = pthread_self();
     // printf("Thread ID: %lu\n", tid);
     unsigned int png_urls_queue_size;
     unsigned int frontier_queue_size;
 
     while (1){
-        if ( curl_handle == NULL ) {
-            printf("Curl initialization failed. Exiting...\n");
-            curl_global_cleanup();
-            abort();
-        }
-
         if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
             return NULL;
         } 
         // *** This shouldn't be required ***
         if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
-            // printf("thread: %ld is exiting.\n", tid);
+            curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
         png_urls_queue_size = get_queueSize(&shared_thread_variables.png_urls);
@@ -180,6 +182,7 @@ void* threadFunction(void* args){
             free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
+            curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
 
@@ -196,7 +199,8 @@ void* threadFunction(void* args){
         if (shared_thread_variables.is_done) { 
             free(recv_buf.buf);
             pthread_mutex_unlock(&shared_thread_variables.cond_lock);
-            // printf("thread: %ld is finishing!\n", tid);
+            pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
+            curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
 
@@ -208,9 +212,11 @@ void* threadFunction(void* args){
 
             // Check if while the current thread was asleep if any or all of the conditions to end the program were satifisied
             if (shared_thread_variables.is_done) { 
-            free(recv_buf.buf);
-            pthread_mutex_unlock(&shared_thread_variables.cond_lock);
-            pthread_exit(NULL);
+                free(recv_buf.buf);
+                pthread_mutex_unlock(&shared_thread_variables.cond_lock);
+                pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
+                curl_easy_cleanup(curl_handle);
+                pthread_exit(NULL);
             }
 
         }
@@ -220,11 +226,11 @@ void* threadFunction(void* args){
         // *** This shouldn't be required ***
         if (popped_url == NULL){
             free(recv_buf.buf);
+            curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
         // Add to hash table to keep track of visited URLS
         insertHashTableEntry(popped_url);
-        push_back(&shared_thread_variables.visted_urls, popped_url);
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
         pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
         sem_post(&shared_thread_variables.num_awake_threads);
@@ -375,7 +381,7 @@ void initThreadStuff(){
 
     init_queue(&shared_thread_variables.frontier);
     init_queue(&shared_thread_variables.png_urls);
-    init_queue(&shared_thread_variables.visted_urls);
+    init_queue(&shared_thread_variables.all_urls);
     push_back(&shared_thread_variables.frontier, arguments.startingURL);
     pthread_cond_init(&shared_thread_variables.cond_variable, NULL);
 
@@ -459,9 +465,16 @@ int is_png(char* buf) {
         return 0;
     }
     unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    if (memcmp(cmpHeader, buf, 8)){
-        return 0;
+    for (int i = 0; i < 8; ++i){
+        if ( ((unsigned char*) buf)[i] != cmpHeader[i] ){
+            return 0;
+        }
     }
+
+    // unsigned char cmpHeader[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    // if (memcmp(cmpHeader, buf, 8)){
+    //     return 0;
+    // }
 
     return 1;
 }
@@ -537,6 +550,7 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                     // pthread_mutex_unlock(&mutex);
                     pthread_mutex_lock(&shared_thread_variables.cond_lock);
                     push_back(&shared_thread_variables.frontier, urlToSave);
+                    push_back(&shared_thread_variables.all_urls, urlToSave);
                     // Signal that there is a new item in the frontier queue to process
                     pthread_cond_signal(&shared_thread_variables.cond_variable);
                     pthread_mutex_unlock(&shared_thread_variables.cond_lock);
@@ -576,6 +590,7 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
         memcpy(urlToSave, eurl, strlen((char*) eurl) + 1);
         // printf("The PNG url is: %s\n", urlToSave);
         push_back(&shared_thread_variables.png_urls, urlToSave);
+        push_back(&shared_thread_variables.all_urls, urlToSave);
     }    
     return 0;
 }
@@ -619,16 +634,30 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url)
 }
 
 void cleanup(){
+    // clean_queue(&shared_thread_variables.frontier);
+    // clean_queue(&shared_thread_variables.png_urls);
+    NODE* currNode = shared_thread_variables.all_urls.head;
+    NODE* temp;
+    while(currNode != NULL){
+        temp = currNode;
+        currNode = currNode->next;
+        if (temp->buffer != NULL){
+            free(temp->buffer);
+        }
+    }
+
+    free(arguments.startingURL);
+
     clean_queue(&shared_thread_variables.frontier);
     clean_queue(&shared_thread_variables.png_urls);
-    clean_queue(&shared_thread_variables.visted_urls);
+    clean_queue(&shared_thread_variables.all_urls);
 
     hdestroy_r(&htab);
-
-    curl_global_cleanup();
 
     pthread_mutex_destroy(&shared_thread_variables.cond_lock);
     pthread_mutex_destroy(&shared_thread_variables.queue_lock);
     pthread_mutex_destroy(&shared_thread_variables.hash_lock);
     pthread_mutex_destroy(&shared_thread_variables.process_data_lock);
+
+    sem_destroy(&shared_thread_variables.num_awake_threads);
 }
