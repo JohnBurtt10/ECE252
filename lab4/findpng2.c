@@ -145,6 +145,26 @@ int main(int argc, char* argv[]){
     return 0;
 }
 
+unsigned int get_count() { 
+    unsigned int num_active_threads;
+    pthread_mutex_lock(&shared_thread_variables.queue_lock);
+    num_active_threads = shared_thread_variables.num_active_threads;
+    pthread_mutex_unlock(&shared_thread_variables.queue_lock);
+    return num_active_threads;
+}
+
+void increment() { 
+    pthread_mutex_lock(&shared_thread_variables.queue_lock);
+    shared_thread_variables.num_active_threads++;
+    pthread_mutex_unlock(&shared_thread_variables.queue_lock);
+}
+
+void decrement() { 
+    pthread_mutex_lock(&shared_thread_variables.queue_lock);
+    shared_thread_variables.num_active_threads--;
+    pthread_mutex_unlock(&shared_thread_variables.queue_lock);
+}
+
 // First thread to enter should block all other threads till it pushes new urls to the frontier.
 // Once URLS are pushed, the thread doing the pushing should signal all other threads to awaken via pthread_cond
 // Upon awakening, each thread should first check if we have retrieved all required unique images. Then, it should
@@ -167,9 +187,9 @@ void* threadFunction(void* args){
     while (1){
         if ( recv_buf_init(&recv_buf, BUF_SIZE) != 0 ) {
             return NULL;
-        } 
+        }
         // *** This shouldn't be required ***
-        if (shared_thread_variables.is_done) { 
+        if (shared_thread_variables.is_done) {
             free(recv_buf.buf);
             curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
@@ -178,16 +198,17 @@ void* threadFunction(void* args){
         frontier_queue_size = get_queueSize(&shared_thread_variables.frontier);
 
         // If every thread other than the current one is asleep or the number of unqiue PNG URLs found is equal to the max specified by the user
-        if ((sem_trywait(&shared_thread_variables.num_awake_threads) && (frontier_queue_size == 0)) || (png_urls_queue_size == arguments.numUniqueURLs)){
-            printf("thread: %ld is broadcasting.\n", tid);
+        decrement();
+        if (((get_count() == 0) && (frontier_queue_size == 0)) || (png_urls_queue_size == arguments.numUniqueURLs)){
             free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
             curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
-
+        
         pthread_mutex_lock(&shared_thread_variables.process_data_lock);
+
         // thread 1 layout for standard pthread_cond_wait/pthread_cond_signal pattern
         // pthread_mutex_lock(&mutex);
         // while (!condition)
@@ -196,8 +217,10 @@ void* threadFunction(void* args){
         // pthread_mutex_unlock(&mutex);
         pthread_mutex_lock(&shared_thread_variables.cond_lock);
 
+        png_urls_queue_size = get_queueSize(&shared_thread_variables.png_urls);
+
         // Check if while the current thread was asleep if any or all of the conditions to end the program were satifisied
-        if (shared_thread_variables.is_done) { 
+        if (shared_thread_variables.is_done || (png_urls_queue_size == arguments.numUniqueURLs)) { 
             free(recv_buf.buf);
             pthread_mutex_unlock(&shared_thread_variables.cond_lock);
             pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
@@ -210,9 +233,11 @@ void* threadFunction(void* args){
         if (is_empty(&shared_thread_variables.frontier)) {
              // sleep until signaled
             pthread_cond_wait(&shared_thread_variables.cond_variable, &shared_thread_variables.cond_lock);
+            
+            png_urls_queue_size = get_queueSize(&shared_thread_variables.png_urls);
 
             // Check if while the current thread was asleep if any or all of the conditions to end the program were satifisied
-            if (shared_thread_variables.is_done) { 
+            if (shared_thread_variables.is_done || (png_urls_queue_size == arguments.numUniqueURLs)) {
                 free(recv_buf.buf);
                 pthread_mutex_unlock(&shared_thread_variables.cond_lock);
                 pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
@@ -221,6 +246,7 @@ void* threadFunction(void* args){
             }
 
         }
+        increment();
         // Pop from queue and update curl URL
         popped_url = pop_front(&shared_thread_variables.frontier);
 
@@ -231,12 +257,10 @@ void* threadFunction(void* args){
             pthread_exit(NULL);
         }
 
-        printf("Thread: %ld is here with %s\n", tid, popped_url);
+        // printf("Thread: %ld is here with %s\n", tid, popped_url);
         // Add to hash table to keep track of visited URLS
-        insertHashTableEntry(popped_url);
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
         pthread_mutex_unlock(&shared_thread_variables.process_data_lock);
-        sem_post(&shared_thread_variables.num_awake_threads);
        
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
 
@@ -374,7 +398,7 @@ void initThreadStuff(){
         exit(1);
     }
 
-    shared_thread_variables.num_active_threads = 0;
+    shared_thread_variables.num_active_threads = arguments.numThreads;
 
     // Since pushing to queue, we cannot "free()" the passed in arg'd, so we must copy its content to a malloc'd variable
     // so the queue can properly free everything.
@@ -409,7 +433,7 @@ void initThreadStuff(){
     }
 
     shared_thread_variables.is_done = 0;
-    sem_init(&shared_thread_variables.num_awake_threads, 1, arguments.numThreads-1);
+    sem_init(&shared_thread_variables.num_awake_threads, 1, arguments.numThreads);
 }
 
 void insertHashTableEntry(char *entry) { 
@@ -552,6 +576,7 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                     // pthread_cond_signal(&cond);
                     // pthread_mutex_unlock(&mutex);
                     pthread_mutex_lock(&shared_thread_variables.cond_lock);
+                    insertHashTableEntry(urlToSave);
                     push_back(&shared_thread_variables.frontier, urlToSave);
                     push_back(&shared_thread_variables.all_urls, urlToSave);
                     // Signal that there is a new item in the frontier queue to process
