@@ -151,6 +151,7 @@ int main(int argc, char* argv[]){
 void* threadFunction(void* args){
     RECV_BUF recv_buf;
     CURL* curl_handle = easy_handle_init(&recv_buf, arguments.startingURL);
+    pthread_t tid = pthread_self();
     if ( curl_handle == NULL ) {
         printf("Curl initialization failed. Exiting...\n");
         curl_global_cleanup();
@@ -178,7 +179,7 @@ void* threadFunction(void* args){
 
         // If every thread other than the current one is asleep or the number of unqiue PNG URLs found is equal to the max specified by the user
         if ((sem_trywait(&shared_thread_variables.num_awake_threads) && (frontier_queue_size == 0)) || (png_urls_queue_size == arguments.numUniqueURLs)){
-            // printf("thread: %ld is broadcasting.\n", tid);
+            printf("thread: %ld is broadcasting.\n", tid);
             free(recv_buf.buf);
             shared_thread_variables.is_done = 1;
             pthread_cond_broadcast(&shared_thread_variables.cond_variable);
@@ -229,6 +230,8 @@ void* threadFunction(void* args){
             curl_easy_cleanup(curl_handle);
             pthread_exit(NULL);
         }
+
+        printf("Thread: %ld is here with %s\n", tid, popped_url);
         // Add to hash table to keep track of visited URLS
         insertHashTableEntry(popped_url);
         pthread_mutex_unlock(&shared_thread_variables.cond_lock);
