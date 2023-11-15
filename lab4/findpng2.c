@@ -39,6 +39,8 @@ use conditional signal to not waste CPU cycles on checking if the Queue is empty
 #define CT_PNG_LEN  9
 #define CT_HTML_LEN 9
 
+#define MAX_NUM_ATTEMPTS 5
+
 #define max(a, b) \
    ({ __typeof__ (a) _a = (a); \
        __typeof__ (b) _b = (b); \
@@ -106,6 +108,7 @@ int main(int argc, char* argv[]){
     p_tids = malloc(sizeof(pthread_t) * arguments.numThreads);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    xmlInitParser();
 
     double times[2];
     struct timeval tv;
@@ -267,6 +270,9 @@ void* threadFunction(void* args){
         curl_easy_setopt(curl_handle, CURLOPT_URL, popped_url);
 
         res = curl_easy_perform(curl_handle);
+        for (int i = 0; i < MAX_NUM_ATTEMPTS-1 && (res != CURLE_OK); ++i){
+            res = curl_easy_perform(curl_handle);
+        }
 
         if (res == CURLE_OK){
             process_data(curl_handle, &recv_buf);
