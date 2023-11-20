@@ -140,7 +140,10 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 xmlFree(old);
             }
             if ( href != NULL && !strncmp((const char *)href, "http", 4) ) {
-                printf("href: %s\n", href);
+                char* urlToSave = malloc(sizeof(unsigned char) * strlen( (char*) href));
+                memcpy(urlToSave, href, strlen((char*) href));
+                printf("href: %s\n", urlToSave);
+                free(urlToSave);
             }
             xmlFree(href);
         }
