@@ -1,0 +1,35 @@
+# all: findpng2
+
+# findpng2: findpng2.c
+# 	gcc findpng2.c ../lab1/starter/png_util/zutil.c ../lab1/starter/png_util/crc.c -o findpng2 -lxml2 -lcurl -pthread -lz 
+	
+# clean:
+# 	rm findpng2
+
+# Makefile, ECE252  
+# Yiqing Huang <yqhuang@uwaterloo.ca>
+
+CC = gcc 
+CFLAGS_XML2 = $(shell xml2-config --cflags)
+CFLAGS_CURL = $(shell curl-config --cflags)
+CFLAGS = -Wall $(CFLAGS_XML2) $(CFLAGS_CURL) -std=gnu99 -g -DDEBUG1_
+LD = gcc
+LDFLAGS = -std=gnu99 -g 
+LDLIBS_XML2 = $(shell xml2-config --libs)
+LDLIBS_CURL = $(shell curl-config --libs)
+LDLIBS = -pthread $(LDLIBS_XML2) $(LDLIBS_CURL) 
+
+SRCS   = findpng3.c queue.c
+OBJS3  = findpng3.o queue.o
+TARGETS= findpng3
+
+all: ${TARGETS}
+
+findpng3: $(OBJS3) 
+	$(LD) -o $@ $^ $(LDLIBS) $(LDFLAGS) 
+
+-include $(SRCS:.c=.d)
+
+.PHONY: clean
+clean:
+	rm -f *~ *.d *.o $(TARGETS) *.png *.html
