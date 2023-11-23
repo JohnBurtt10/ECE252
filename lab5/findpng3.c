@@ -140,6 +140,7 @@ void crawl()
         }
 
         curl_multi_perform(shared_thread_variables.cm, &still_running);
+
         if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs) {
             break;
         }
@@ -155,6 +156,7 @@ void read_messages()
     CURLMsg* msg;
     int msgs_left;
     CURL *eh = NULL;
+    RECV_BUF *recv_buf = NULL;
 
     while ((msg = curl_multi_info_read(shared_thread_variables.cm, &msgs_left)))
     {
@@ -165,27 +167,47 @@ void read_messages()
             return_code = msg->data.result;
             if (return_code != CURLE_OK)
             {
+                popped_url = pop_front(&shared_thread_variables.frontier);
+                if (popped_url == NULL){
+                    curl_multi_remove_handle(shared_thread_variables.cm, eh);
+                    curl_multi_add_handle(shared_thread_variables.cm, eh);
+                    memset(recv_buf->buf, 0, recv_buf->size);
+                    recv_buf->size = 0;
+                    recv_buf->seq = -1;
+                    continue;
+                }
+                push_back(&shared_thread_variables.visted_urls, popped_url);
+                curl_multi_remove_handle(shared_thread_variables.cm, eh);
+
+                curl_easy_getinfo(eh, CURLINFO_PRIVATE, &recv_buf);
+                curl_easy_setopt(eh, CURLOPT_URL, popped_url);
+                memset(recv_buf->buf, 0, recv_buf->size);
+                recv_buf->size = 0;
+                recv_buf->seq = -1;
+
+                curl_multi_add_handle(shared_thread_variables.cm, eh);
                 fprintf(stderr, "CURL error code: %d\n", msg->data.result);
                 continue;
             }
 
-            RECV_BUF *recv_buf = NULL;
-
             curl_easy_getinfo(eh, CURLINFO_PRIVATE, &recv_buf);
-            // printf("size of frontier before push: %d\n", get_queueSize(&shared_thread_variables.frontier));
             process_data(eh, recv_buf);
-            // printf("size of frontier before pop: %d\n", get_queueSize(&shared_thread_variables.frontier));
             popped_url = pop_front(&shared_thread_variables.frontier);
-            push_back(&shared_thread_variables.visted_urls, popped_url);
+
             if (popped_url == NULL){
+                curl_multi_remove_handle(shared_thread_variables.cm, eh);
+                curl_multi_add_handle(shared_thread_variables.cm, eh);
+                memset(recv_buf->buf, 0, recv_buf->size);
                 recv_buf->size = 0;
                 recv_buf->seq = -1;
                 continue;
             }
 
+            push_back(&shared_thread_variables.visted_urls, popped_url);
             curl_multi_remove_handle(shared_thread_variables.cm, eh);
 
             curl_easy_setopt(eh, CURLOPT_URL, popped_url);
+            memset(recv_buf->buf, 0, recv_buf->size);
             recv_buf->size = 0;
             recv_buf->seq = -1;
 
@@ -194,6 +216,12 @@ void read_messages()
         else
         {
             fprintf(stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg);
+            curl_easy_getinfo(eh, CURLINFO_PRIVATE, &recv_buf);
+            curl_multi_remove_handle(shared_thread_variables.cm, msg->easy_handle);
+            memset(recv_buf->buf, 0, recv_buf->size);
+            recv_buf->size = 0;
+            recv_buf->seq = -1;
+            curl_multi_add_handle(shared_thread_variables.cm, msg->easy_handle);
         }
     }
 }
@@ -483,7 +511,6 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 hsearch_r(shared_thread_variables.e, FIND, &shared_thread_variables.ep, &htab);
                 if (shared_thread_variables.ep == NULL)
                 { // Does not exist, so push URL to frontier
-                    printf("HREF: %s\n", urlToSave);
                     insertHashTableEntry(urlToSave);
                     push_back(&shared_thread_variables.frontier, urlToSave);
                 }
@@ -575,19 +602,21 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url)
 
 void cleanup()
 {
-    // clean_queue(&shared_thread_variables.frontier);
-    // clean_queue(&shared_thread_variables.png_urls);
-    // clean_queue(&shared_thread_variables.visted_urls);
+    clean_queue(&shared_thread_variables.frontier);
+    clean_queue(&shared_thread_variables.png_urls);
+    clean_queue(&shared_thread_variables.visted_urls);
 
     hdestroy_r(&htab);
 
     for (int i = 0; i < arguments.maxNumConcurrentConnections; i++)
     {
         free(shared_thread_variables.recv_buffers[i]->buf);
+        free(shared_thread_variables.recv_buffers[i]);
         curl_easy_cleanup(shared_thread_variables.curl_handlers[i]);
     }
 
+    free(shared_thread_variables.curl_handlers);
     free(shared_thread_variables.recv_buffers);
-    curl_global_cleanup();
     curl_multi_cleanup(shared_thread_variables.cm);
+    curl_global_cleanup();
 }
