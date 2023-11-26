@@ -7,11 +7,10 @@ void init_queue(QUEUE* queue){
     queue->queueSize = 0;
 }
 
-void push_back(QUEUE* queue, char* url, RECV_BUF* recv_buf){
+void push_back(QUEUE* queue, char* url){
     NODE* newNode = malloc(sizeof(NODE));
 
     newNode->buffer = url;
-    newNode->recv_buf = recv_buf;
     
     NODE* temp = queue->head;
     queue->head = newNode;
@@ -27,11 +26,9 @@ void clean_queue(QUEUE* queue){
         currNode = currNode->next;
         if (temp->buffer != NULL){
             free(temp->buffer);
+            temp->buffer = NULL;
         }
-        if (temp->recv_buf != NULL){
-            free(temp->recv_buf->buf);
-            free(temp->recv_buf);
-        }
+        
         free(temp);
     }
 }
@@ -52,24 +49,6 @@ char* pop_front(QUEUE* queue){
     free(temp);
 
     return popped;
-}
-
-RECV_BUF* pop_front_recv_buf(QUEUE* queue){
-    if (queue->queueSize == 0){
-        puts("Nothing to Pop");
-        return NULL;
-    }
-    RECV_BUF* popped = queue->head->recv_buf;
-
-    NODE* temp = queue->head;
-    queue->head = queue->head->next;
-
-    queue->queueSize--;
-
-    free(temp);
-
-    return popped;
-
 }
 
 int is_empty(QUEUE* queue){

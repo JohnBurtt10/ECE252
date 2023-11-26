@@ -37,6 +37,16 @@ typedef struct _args
     char *startingURL;
 } ARGS;
 
+typedef struct recv_buf2
+{
+    char *buf;       /* memory to hold a copy of received data */
+    size_t size;     /* size of valid data in buf in bytes*/
+    size_t max_size; /* max capacity of buf in bytes*/
+    int seq;         /* >=0 sequence number extracted from http header */
+                     /* <0 indicates an invalid seq number */
+    int curl_id;
+} RECV_BUF;
+
 // Utilize a hashmap to store already visited webpages to prevent visiting the same webpage more than once.
 typedef struct _sharedVariables
 {
@@ -44,11 +54,9 @@ typedef struct _sharedVariables
     QUEUE frontier;    // To-visit urls
     QUEUE png_urls;    // URLS that are pngs.
     QUEUE visted_urls; // A queue used to store all URLS for deallocation.
-    QUEUE free_buffers;
     RECV_BUF **recv_buffers;
     CURLM *cm;
     CURL** curl_handlers;
-    int null_count;
     int num_of_eh;
 } sharedVariables;
 
@@ -61,7 +69,7 @@ void init_stuff();
 void crawl();
 int is_png(char *buf);
 int find_http(char *buf, int size, int follow_relative_links, const char *base_url); // Provided
-void easy_handle_init(RECV_BUF *ptr, int counter, char* startingURL);
+CURL* easy_handle_init(RECV_BUF *ptr, char* startingURL);
 size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata);   // Provided
 size_t write_cb_curl3(char *p_recv, size_t size, size_t nmemb, void *p_userdata); // Provided
 int recv_buf_init(RECV_BUF *ptr, size_t max_size);                                // Provided
@@ -75,6 +83,8 @@ htmlDocPtr mem_getdoc(char *buf, int size, const char *url); // Provided
 void read_messages();
 void update_curl_handle(CURL* eh, RECV_BUF* recv_buf);
 void reset_recv_buf(RECV_BUF* recv_buf);
+void setup_curl_multi();
+void reset_all_ehs();
 
 struct hsearch_data htab;
 
@@ -91,12 +101,26 @@ int main(int argc, char *argv[])
 
     init_stuff();
 
-    for (int i = 0; i < arguments.maxNumConcurrentConnections; i++)
-    {
-        RECV_BUF *recv_buf = malloc(sizeof(RECV_BUF));
-        recv_buf_init(recv_buf, BUF_SIZE);
-        shared_thread_variables.recv_buffers[i] = recv_buf;
-        easy_handle_init(recv_buf, i, NULL);
+    setup_curl_multi();
+
+    // Perform inital crawl of seed url. Then distribute url to other crawlers.
+    RECV_BUF temp_recv_buffer;
+    char* popped_url = pop_front(&shared_thread_variables.frontier);
+    push_back(&shared_thread_variables.visted_urls, popped_url);
+    recv_buf_init(&temp_recv_buffer, BUF_SIZE); 
+    CURL* starting_curl = easy_handle_init(&temp_recv_buffer, popped_url);
+    curl_easy_perform(starting_curl);
+    process_data(starting_curl, &temp_recv_buffer);
+    free(temp_recv_buffer.buf);
+    curl_easy_cleanup(starting_curl);
+
+    for (int i = 0; !is_empty(&shared_thread_variables.frontier) && i < arguments.maxNumConcurrentConnections; i++){
+        char* popped_url = pop_front(&shared_thread_variables.frontier);
+        printf("Popped URL: %s, \n", popped_url);
+        push_back(&shared_thread_variables.visted_urls, popped_url);
+        CURL* curr_eh = shared_thread_variables.curl_handlers[i];
+        curl_easy_setopt(curr_eh, CURLOPT_URL, popped_url);
+        curl_multi_add_handle(shared_thread_variables.cm, curr_eh);
     }
 
     crawl();
@@ -120,28 +144,36 @@ void crawl()
         create x amount of curl_handlers till frontier is empty again OR once x == -t argument
     */
     int still_running = 0;
-    curl_multi_perform(shared_thread_variables.cm, &still_running);
-    do
-    {
-        int numfds = 0;
-        int res = curl_multi_wait(shared_thread_variables.cm, NULL, 0, MAX_WAIT_MSECS, &numfds);
-        if (res != CURLM_OK)
-        {
-            fprintf(stderr, "error: curl_multi_wait() returned %d\n", res);
-            return;
-        }
-        else
+
+    while (1){
+        do
         {   
-            read_messages();
-        }
+            if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs) {
+                return;
+            }
 
-        curl_multi_perform(shared_thread_variables.cm, &still_running);
+            curl_multi_perform(shared_thread_variables.cm, &still_running);
 
-        if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs || shared_thread_variables.null_count == arguments.maxNumConcurrentConnections) {
+            int numfds = 0;
+            int res = curl_multi_wait(shared_thread_variables.cm, NULL, 0, MAX_WAIT_MSECS, &numfds);
+            if (res != CURLM_OK)
+            {
+                fprintf(stderr, "error: curl_multi_wait() returned %d\n", res);
+                return;
+            }
+            else
+            {   
+                read_messages();
+            }
+            printf("size of frontier: %d, size of png_queue: %d, and still running: %d\n", get_queueSize(&shared_thread_variables.frontier), get_queueSize(&shared_thread_variables.png_urls), still_running);
+        } while (still_running);
+
+        if (is_empty(&shared_thread_variables.frontier)){
             break;
         }
-        printf("size of frontier: %d and still running: %d\n", get_queueSize(&shared_thread_variables.frontier), still_running);
-    } while (still_running);
+
+        reset_all_ehs();
+    }
 }
 
 void read_messages()
@@ -165,20 +197,20 @@ void read_messages()
             {
                 reset_recv_buf(recv_buf);
                 curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-                curl_easy_cleanup(shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-                push_back(&shared_thread_variables.free_buffers, NULL, recv_buf);
                 shared_thread_variables.num_of_eh--;
-                fprintf(stderr, "CURL error code: %d\n", msg->data.result);
+                // fprintf(stderr, "CURL error code: %d\n", msg->data.result);
                 continue;
             }
 
-            printf("Processing Data\n");
             process_data(eh, recv_buf);
             update_curl_handle(eh, recv_buf);
         }
         else
         {
             fprintf(stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg);
+            curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, &recv_buf);
+            curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
+            shared_thread_variables.num_of_eh--;
         }
     }
 }
@@ -190,57 +222,53 @@ void reset_recv_buf(RECV_BUF* recv_buf){
     recv_buf->seq = -1;
 }
 
-// void update_curl_handle(CURL* eh, RECV_BUF* recv_buf){
-//     while (shared_thread_variables.num_active_eh < arguments.maxNumConcurrentConnections){
-//         printf("size of frontier: %d and # of eh's: %d\n", get_queueSize(&shared_thread_variables.frontier), shared_thread_variables.num_active_eh);
-//         char* popped_url = pop_front(&shared_thread_variables.frontier);
-//         reset_recv_buf(recv_buf);
-//         if (popped_url == NULL)
-//         {
-//             break;
-//         }
-
-//         curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-//         curl_easy_cleanup(shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-//         easy_handle_init(recv_buf, recv_buf->curl_id, popped_url); // Add easy handle to multi handler
-//         push_back(&shared_thread_variables.visted_urls, popped_url);
-//         shared_thread_variables.num_active_eh++;
-//     }
-// }
+void reset_all_ehs(){
+    for (int i = 0; !is_empty(&shared_thread_variables.frontier) && i < arguments.maxNumConcurrentConnections; i++){
+        char* popped_url = pop_front(&shared_thread_variables.frontier);
+        push_back(&shared_thread_variables.visted_urls, popped_url);
+        RECV_BUF* curr_recv_buf = shared_thread_variables.recv_buffers[i];
+        CURL* curr_eh = shared_thread_variables.curl_handlers[i];
+        reset_recv_buf(curr_recv_buf);
+        curl_easy_setopt(curr_eh, CURLOPT_URL, popped_url);
+        curl_multi_add_handle(shared_thread_variables.cm, curr_eh);
+        shared_thread_variables.num_of_eh++;
+    }   
+}
 
 void update_curl_handle(CURL* eh, RECV_BUF* recv_buf){
     char* popped_url = pop_front(&shared_thread_variables.frontier);
-    if (popped_url == NULL){
-        shared_thread_variables.null_count++;
-        return;
-    }
+
     curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
     reset_recv_buf(recv_buf);
-    easy_handle_init(recv_buf, recv_buf->curl_id, popped_url);
-    push_back(&shared_thread_variables.visted_urls, popped_url, NULL);
+    if (popped_url == NULL){
+        shared_thread_variables.num_of_eh--;
+        return;
+    }
 
-    printf("Queue size: %d\n", get_queueSize(&shared_thread_variables.free_buffers));
-    for (int i = 0; i < get_queueSize(&shared_thread_variables.free_buffers); i++){
-        if (popped_url == NULL){
-            shared_thread_variables.null_count++;
-            break;
-        }
-        RECV_BUF* popped_buffer = pop_front_recv_buf(&shared_thread_variables.free_buffers);
-        reset_recv_buf(popped_buffer);
-        easy_handle_init(popped_buffer, popped_buffer->curl_id, popped_url);
-        push_back(&shared_thread_variables.visted_urls, popped_url, NULL);
-        shared_thread_variables.null_count = 0;
-        popped_url = pop_front(&shared_thread_variables.frontier);
+    curl_easy_setopt(shared_thread_variables.curl_handlers[recv_buf->curl_id], CURLOPT_URL, popped_url);
+    curl_multi_add_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
+    push_back(&shared_thread_variables.visted_urls, popped_url);
+}
+
+void setup_curl_multi(){
+    for (int i = 0; i < arguments.maxNumConcurrentConnections; i++)
+    {
+        RECV_BUF *recv_buf = malloc(sizeof(RECV_BUF));
+        recv_buf_init(recv_buf, BUF_SIZE);
+        shared_thread_variables.recv_buffers[i] = recv_buf;
+        CURL* eh = easy_handle_init(recv_buf, NULL);
+        shared_thread_variables.curl_handlers[i] = eh;
+        shared_thread_variables.recv_buffers[i]->curl_id = i;
     }
 }
 
-void easy_handle_init(RECV_BUF *ptr, int index, char* startingURL)
+CURL* easy_handle_init(RECV_BUF *ptr, char* startingURL)
 {
     CURL *curl_handle = NULL;
 
     if (ptr == NULL)
     {
-        return;
+        return NULL;
     }
 
     /* init a curl session */
@@ -249,7 +277,7 @@ void easy_handle_init(RECV_BUF *ptr, int index, char* startingURL)
     if (curl_handle == NULL)
     {
         fprintf(stderr, "curl_easy_init: returned NULL\n");
-        return;
+        return NULL;
     }
 
     /* specify URL to get */
@@ -289,9 +317,7 @@ void easy_handle_init(RECV_BUF *ptr, int index, char* startingURL)
 
     curl_easy_setopt(curl_handle, CURLOPT_PRIVATE, (void *)ptr);
 
-    shared_thread_variables.curl_handlers[index] = curl_handle;
-    shared_thread_variables.recv_buffers[index]->curl_id = index;
-    curl_multi_add_handle(shared_thread_variables.cm, curl_handle);
+    return curl_handle;
 }
 
 size_t header_cb_curl(char *p_recv, size_t size, size_t nmemb, void *userdata)
@@ -367,15 +393,19 @@ void init_stuff()
         exit(1);
     }
 
+    char* starting_url = malloc(sizeof(char) * 256);
+    strncpy(starting_url, arguments.startingURL, 256);
+
     shared_thread_variables.recv_buffers = malloc(sizeof(RECV_BUF *) * arguments.maxNumConcurrentConnections);
     shared_thread_variables.curl_handlers = malloc(sizeof(CURL *) * arguments.maxNumConcurrentConnections);
 
-    init_queue(&shared_thread_variables.free_buffers);
+    // init_queue(&shared_thread_variables.free_buffers);
     init_queue(&shared_thread_variables.frontier);
     init_queue(&shared_thread_variables.visted_urls);
     init_queue(&shared_thread_variables.png_urls);
-    shared_thread_variables.null_count = 0;
-    shared_thread_variables.num_of_eh = arguments.maxNumConcurrentConnections;
+
+    insertHashTableEntry(starting_url);
+    push_back(&shared_thread_variables.frontier, starting_url);
 }
 
 void insertHashTableEntry(char *entry)
@@ -465,7 +495,7 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
     curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &response_code);
     if (response_code >= 400)
     {
-        fprintf(stderr, "Error.\n");
+        // fprintf(stderr, "Error.\n");
         return 1;
     }
 
@@ -473,7 +503,7 @@ int process_data(CURL *curl_handle, RECV_BUF *p_recv_buf)
     curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_TYPE, &ct);
     if (ct != NULL)
     {
-        printf("Content-Type: %s, len=%ld\n", ct, strlen(ct));
+        // printf("Content-Type: %s, len=%ld\n", ct, strlen(ct));
     }
 
     if (strstr(ct, CT_HTML))
@@ -528,7 +558,8 @@ int find_http(char *buf, int size, int follow_relative_links, const char *base_u
                 if (shared_thread_variables.ep == NULL)
                 { // Does not exist, so push URL to frontier
                     insertHashTableEntry(urlToSave);
-                    push_back(&shared_thread_variables.frontier, urlToSave, NULL);
+                    push_back(&shared_thread_variables.frontier, urlToSave);
+                    // printf("Href: %s\n", href);
                 }
                 else
                 {
@@ -560,16 +591,20 @@ int process_png(CURL *curl_handle, RECV_BUF *p_recv_buf)
     curl_easy_getinfo(curl_handle, CURLINFO_EFFECTIVE_URL, &eurl);
     if (eurl != NULL)
     {
+        if (get_queueSize(&shared_thread_variables.png_urls) == arguments.numUniqueURLs) {
+            return 0;
+        }
+
         // First verify if it is an actual image before pushing to queue.
         if (!is_png(p_recv_buf->buf))
         {
             return 0;
         }
         char* urlToSave = malloc(sizeof(char) * 256);
-        memcpy(urlToSave, eurl, 256);
+        strncpy(urlToSave, (char*) eurl, 256);
 
-        printf("The PNG url is: %s\n", urlToSave);
-        push_back(&shared_thread_variables.png_urls, urlToSave, NULL);
+        // printf("The PNG url is: %s\n", urlToSave);
+        push_back(&shared_thread_variables.png_urls, urlToSave);
     }
     return 0;
 }
@@ -596,7 +631,7 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *xpath)
     if (xmlXPathNodeSetIsEmpty(result->nodesetval))
     {
         xmlXPathFreeObject(result);
-        printf("No result\n");
+        // printf("No result\n");
         return NULL;
     }
     return result;
@@ -621,7 +656,6 @@ void cleanup()
     clean_queue(&shared_thread_variables.frontier);
     clean_queue(&shared_thread_variables.png_urls);
     clean_queue(&shared_thread_variables.visted_urls);
-    clean_queue(&shared_thread_variables.free_buffers);
 
     hdestroy_r(&htab);
 
