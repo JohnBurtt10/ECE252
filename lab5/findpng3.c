@@ -91,7 +91,9 @@ struct hsearch_data htab;
 // First perform a single curl operation to fetch all urls from starting seed url. Then perform multi curl.
 int main(int argc, char *argv[])
 {
-    processInput(&arguments, argv, argc);
+    if (!processInput(&arguments, argv, argc)){
+        return 0;
+    }
 
     shared_thread_variables.cm = NULL;
 
@@ -116,7 +118,6 @@ int main(int argc, char *argv[])
 
     for (int i = 0; !is_empty(&shared_thread_variables.frontier) && i < arguments.maxNumConcurrentConnections; i++){
         char* popped_url = pop_front(&shared_thread_variables.frontier);
-        printf("Popped URL: %s, \n", popped_url);
         push_back(&shared_thread_variables.visted_urls, popped_url);
         CURL* curr_eh = shared_thread_variables.curl_handlers[i];
         curl_easy_setopt(curr_eh, CURLOPT_URL, popped_url);
@@ -165,7 +166,7 @@ void crawl()
             {   
                 read_messages();
             }
-            printf("size of frontier: %d, size of png_queue: %d, and still running: %d\n", get_queueSize(&shared_thread_variables.frontier), get_queueSize(&shared_thread_variables.png_urls), still_running);
+            // printf("size of frontier: %d, size of png_queue: %d, and still running: %d\n", get_queueSize(&shared_thread_variables.frontier), get_queueSize(&shared_thread_variables.png_urls), still_running);
         } while (still_running);
 
         if (is_empty(&shared_thread_variables.frontier)){
@@ -197,20 +198,18 @@ void read_messages()
             {
                 reset_recv_buf(recv_buf);
                 curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-                shared_thread_variables.num_of_eh--;
-                // fprintf(stderr, "CURL error code: %d\n", msg->data.result);
                 continue;
             }
 
             process_data(eh, recv_buf);
-            update_curl_handle(eh, recv_buf);
+            reset_recv_buf(recv_buf);
+            curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
         }
         else
         {
             fprintf(stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg);
             curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, &recv_buf);
             curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-            shared_thread_variables.num_of_eh--;
         }
     }
 }
@@ -233,21 +232,6 @@ void reset_all_ehs(){
         curl_multi_add_handle(shared_thread_variables.cm, curr_eh);
         shared_thread_variables.num_of_eh++;
     }   
-}
-
-void update_curl_handle(CURL* eh, RECV_BUF* recv_buf){
-    char* popped_url = pop_front(&shared_thread_variables.frontier);
-
-    curl_multi_remove_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-    reset_recv_buf(recv_buf);
-    if (popped_url == NULL){
-        shared_thread_variables.num_of_eh--;
-        return;
-    }
-
-    curl_easy_setopt(shared_thread_variables.curl_handlers[recv_buf->curl_id], CURLOPT_URL, popped_url);
-    curl_multi_add_handle(shared_thread_variables.cm, shared_thread_variables.curl_handlers[recv_buf->curl_id]);
-    push_back(&shared_thread_variables.visted_urls, popped_url);
 }
 
 void setup_curl_multi(){
