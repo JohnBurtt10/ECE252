@@ -7,6 +7,7 @@
 #include <search.h> // Library used to include hash table.
 #include <curl/curl.h>
 #include <curl/multi.h>
+#include <time.h>
 #include <libxml/HTMLparser.h>
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
@@ -105,6 +106,15 @@ int main(int argc, char *argv[])
 
     setup_curl_multi();
 
+    double times[2];
+    struct timeval tv;
+
+    if (gettimeofday(&tv, NULL) != 0) {
+        perror("gettimeofday");
+        abort();
+    }
+    times[0] = (tv.tv_sec) + tv.tv_usec/1000000.;
+
     // Perform inital crawl of seed url. Then distribute url to other crawlers.
     RECV_BUF temp_recv_buffer;
     char* popped_url = pop_front(&shared_thread_variables.frontier);
@@ -131,6 +141,13 @@ int main(int argc, char *argv[])
     {
         print_queue(&shared_thread_variables.visted_urls, arguments.logFile);
     }
+
+    if (gettimeofday(&tv, NULL) != 0) {
+        perror("gettimeofday");
+        abort();
+    }
+    times[1] = (tv.tv_sec) + tv.tv_usec/1000000.;
+    printf("findpng3 execution time: %.6lf seconds\n",  times[1] - times[0]);
 
     cleanup();
     return 0;
